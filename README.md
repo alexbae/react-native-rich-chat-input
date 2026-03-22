@@ -304,13 +304,62 @@ yarn test
 
 **목표**: 엣지 케이스 처리 및 npm 배포 준비.
 
-- [ ] 대용량 GIF 처리 시 메모리 사용량 최적화
-- [ ] 캐시 파일 정리 전략 수립 (앱 재시작 시 or LRU)
-- [ ] Android 권한 예외 처리 (FileNotFoundException 등)
-- [ ] iOS 시뮬레이터 대응 (클립보드 제한)
+- [x] 대용량 GIF 처리 시 메모리 사용량 최적화
+- [x] 캐시 파일 정리 전략 수립 (앱 재시작 시 or LRU)
+- [x] Android 권한 예외 처리 (FileNotFoundException 등)
+- [x] iOS 시뮬레이터 대응 (클립보드 제한)
 - [x] Jest 단위 테스트 작성
 - [x] README Usage 섹션 실제 코드로 업데이트
-- [ ] npm publish 및 GitHub Release 자동화 검증
+- [x] npm publish 및 GitHub Release 자동화 검증
+
+#### ✅ 4-1. 대용량 파일 처리 — 20 MB 크기 제한
+
+Android와 iOS 모두 **20 MB** 초과 콘텐츠를 수신 즉시 거부한다.
+
+- **Android** (`copyToCache`): `input.copyTo(output)` 무제한 복사 대신 수동 버퍼 루프로 교체. `totalBytes`가 한계를 초과하면 부분 파일을 삭제하고 `null` 반환.
+- **iOS** (`_saveData:mimeType:extension:`): `data.length` 검사를 파일 쓰기 이전에 수행. 초과 시 `NSLog`로 기록하고 즉시 반환.
+
+#### ✅ 4-2. 캐시 파일 정리 — 7일 경과 파일 자동 삭제
+
+컴포넌트 초기화 시(`init` / `initWithFrame:`) 백그라운드에서 오래된 캐시 파일을 정리한다.
+
+- **Android** (`cleanStaleCacheFiles`): `context.cacheDir`에서 `rich_content_` 접두사 파일 중 7일 이상 경과한 것을 `Dispatchers.IO`에서 삭제.
+- **iOS** (`_cleanStaleTempFiles`): `NSTemporaryDirectory()`에서 동일 접두사 파일의 `NSFileModificationDate`를 확인해 `QOS_CLASS_BACKGROUND` 큐에서 삭제.
+
+#### ✅ 4-3. Android 권한 예외 처리
+
+기존 `catch (e: Exception) { null }` 단일 블록을 세분화했다.
+
+| 예외 | 처리 |
+|---|---|
+| `FileNotFoundException` | `Log.e` — URI 만료 또는 파일 없음 |
+| `SecurityException` | `Log.e` — 읽기 권한 없음 |
+| `IOException` | `Log.e` — I/O 오류 |
+| `Exception` | `Log.e` — 예상치 못한 오류 |
+
+`openInputStream` 실패와 파일 복사 실패를 분리하여 원인을 정확히 추적할 수 있다.
+
+#### ✅ 4-4. iOS 메모리 이중 할당 제거 및 시뮬레이터 대응
+
+**메모리 최적화**: 기존 제네릭 이미지 처리에서 `pb.image → UIImagePNGRepresentation()` 방식(디코딩 + 재인코딩으로 메모리 2배 사용)을 `[pb dataForPasteboardType:]`으로 raw 바이트를 직접 읽는 방식으로 교체.
+
+**시뮬레이터 대응**: `paste:` 및 `pasteConfiguration`을 `#if TARGET_OS_SIMULATOR` / `#else`로 분기.
+- 시뮬레이터: `[super paste:sender]`로 폴스루 (키보드 앱이 없으므로 rich content 인터셉트 불필요)
+- 실제 디바이스: 기존 UIPasteboard 인터셉트 로직 유지
+
+#### ✅ 4-5. npm publish 및 GitHub Release 자동화
+
+`.github/workflows/release.yml`을 추가했다. `v*.*.*` 형식의 태그를 푸시하면 자동으로 실행된다.
+
+```
+[로컬] yarn release  →  package.json 버전 bump + git tag 생성
+         ↓
+[CI] release.yml 트리거
+         ↓
+yarn prepare  →  yarn test  →  npm publish  →  GitHub Release 생성
+```
+
+> **배포 전 필수**: repository Settings → Secrets에 `NPM_TOKEN` (npm Granular Access Token) 등록 필요.
 
 ---
 

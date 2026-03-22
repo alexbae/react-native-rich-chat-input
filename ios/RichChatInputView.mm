@@ -11,6 +11,9 @@
 
 using namespace facebook::react;
 
+static const NSUInteger kRichContentMaxFileSize = 20 * 1024 * 1024; // 20 MB
+static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 (초)
+
 // ---------------------------------------------------------------------------
 #pragma mark - RichChatInputInternalTextView
 // ---------------------------------------------------------------------------
@@ -53,6 +56,8 @@ using namespace facebook::react;
         _placeholderLabel.font = self.font;
         _placeholderLabel.textColor = [UIColor placeholderTextColor];
         [self addSubview:_placeholderLabel];
+
+        [self _cleanStaleTempFiles];
     }
     return self;
 }
@@ -113,6 +118,11 @@ using namespace facebook::react;
 #pragma mark - Paste interception
 
 - (void)paste:(id)sender {
+#if TARGET_OS_SIMULATOR
+    // iOS 시뮬레이터에서는 키보드 소스의 Rich Content(GIF, 스티커 등)가
+    // UIPasteboard를 통해 전달되지 않으므로 기본 텍스트 붙여넣기로 폴스루한다.
+    [super paste:sender];
+#else
     UIPasteboard *pb = [UIPasteboard generalPasteboard];
 
     // 1. GIF — UIImage 변환 시 애니메이션 손실되므로 NSData 직접 처리
@@ -145,23 +155,30 @@ using namespace facebook::react;
         }
     }
 
-    // 4. Generic image (JPEG, HEIC 등) — UIImage로 디코딩 후 PNG 재인코딩
+    // 4. Generic image (JPEG 등) — raw 바이트를 직접 사용해 메모리 이중 할당 방지
+    //    (UIImage 디코딩 후 UIImagePNGRepresentation 재인코딩 방식 대비 메모리 절반 사용)
     if ([pb containsPasteboardTypes:UIPasteboardTypeListImage]) {
-        UIImage *image = pb.image;
-        if (image && [self _mimeTypeIsAccepted:@"image/png"]) {
-            NSData *data = UIImagePNGRepresentation(image);
-            if (data) {
-                [self _saveData:data mimeType:@"image/png" extension:@"png"];
-                return;
-            }
+        NSData *jpegData = [pb dataForPasteboardType:@"public.jpeg"];
+        if (jpegData && [self _mimeTypeIsAccepted:@"image/jpeg"]) {
+            [self _saveData:jpegData mimeType:@"image/jpeg" extension:@"jpg"];
+            return;
+        }
+        NSData *pngData2 = [pb dataForPasteboardType:@"public.png"];
+        if (pngData2 && [self _mimeTypeIsAccepted:@"image/png"]) {
+            [self _saveData:pngData2 mimeType:@"image/png" extension:@"png"];
+            return;
         }
     }
 
     // 5. 처리되지 않은 타입 — 기본 동작 위임 (텍스트 붙여넣기 등)
     [super paste:sender];
+#endif
 }
 
 - (UIPasteConfiguration *)pasteConfiguration API_AVAILABLE(ios(11.0)) {
+#if TARGET_OS_SIMULATOR
+    return nil;
+#else
     NSMutableArray<NSString *> *utis = [NSMutableArray array];
     for (NSString *mime in self.acceptedMimeTypes) {
         if ([mime isEqualToString:@"image/*"] || [mime isEqualToString:@"image/gif"]) {
@@ -187,6 +204,7 @@ using namespace facebook::react;
         [utis addObject:@"public.image"];
     }
     return [[UIPasteConfiguration alloc] initWithAcceptableTypeIdentifiers:utis];
+#endif
 }
 
 #pragma mark - Private helpers
@@ -202,6 +220,12 @@ using namespace facebook::react;
 }
 
 - (void)_saveData:(NSData *)data mimeType:(NSString *)mimeType extension:(NSString *)ext {
+    if (data.length > kRichContentMaxFileSize) {
+        NSLog(@"[RichChatInput] Rejecting content: size %lu bytes exceeds %lu MB limit",
+              (unsigned long)data.length, (unsigned long)(kRichContentMaxFileSize / 1024 / 1024));
+        return;
+    }
+
     __weak RichChatInputInternalTextView *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSString *fileName = [NSString stringWithFormat:@"rich_content_%@.%@",
@@ -212,12 +236,41 @@ using namespace facebook::react;
         NSError *error = nil;
         BOOL success = [data writeToURL:fileURL options:NSDataWritingAtomic error:&error];
 
+        if (!success) {
+            NSLog(@"[RichChatInput] Failed to write temp file: %@", error.localizedDescription);
+        }
+
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong RichChatInputInternalTextView *strongSelf = weakSelf;
             if (!strongSelf || !success) return;
             NSString *uri = fileURL.absoluteString; // "file:///..."
             [strongSelf.eventDelegate dispatchRichContent:uri mimeType:mimeType];
         });
+    });
+}
+
+- (void)_cleanStaleTempFiles {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *tmpDir = NSTemporaryDirectory();
+        NSError *error = nil;
+        NSArray<NSString *> *files = [fm contentsOfDirectoryAtPath:tmpDir error:&error];
+        if (!files) return;
+
+        NSDate *cutoff = [NSDate dateWithTimeIntervalSinceNow:-kRichContentCacheMaxAge];
+        for (NSString *name in files) {
+            if (![name hasPrefix:@"rich_content_"]) continue;
+            NSString *fullPath = [tmpDir stringByAppendingPathComponent:name];
+            NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
+            NSDate *modDate = attrs[NSFileModificationDate];
+            if (modDate && [modDate compare:cutoff] == NSOrderedAscending) {
+                NSError *removeError = nil;
+                if (![fm removeItemAtPath:fullPath error:&removeError]) {
+                    NSLog(@"[RichChatInput] Failed to delete stale temp file %@: %@",
+                          name, removeError.localizedDescription);
+                }
+            }
+        }
     });
 }
 
