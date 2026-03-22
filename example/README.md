@@ -86,6 +86,26 @@ You've successfully run and modified your React Native App. :partying_face:
 
 If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
 
+## `No podspec found for ReactAppDependencyProvider`
+
+New Architecture(`RCT_NEW_ARCH_ENABLED=1`) 환경에서 `pod install` 시 아래 에러가 발생할 수 있습니다:
+
+```
+[!] No podspec found for `ReactAppDependencyProvider` in `build/generated/ios/ReactAppDependencyProvider`
+```
+
+`ReactAppDependencyProvider`는 codegen이 생성하는 파일로, `pod install` 전에 먼저 생성되어야 합니다.
+
+**해결 방법**: `example` 디렉토리에서 아래 순서로 실행하세요.
+
+```sh
+# 1. codegen 실행 (ReactAppDependencyProvider 등 생성)
+npx react-native codegen
+
+# 2. pod install
+cd ios && bundle exec pod install
+```
+
 # Learn More
 
 To learn more about React Native, take a look at the following resources:
