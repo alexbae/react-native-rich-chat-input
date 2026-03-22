@@ -196,7 +196,7 @@ interface NativeProps extends ViewProps {
 
 스캐폴딩 기본값인 `color` prop은 제거. **완료.**
 
-#### 1-2. `RichChatInputView.kt` — `AppCompatEditText` 기반 재작성
+#### ✅ 1-2. `RichChatInputView.kt` — `AppCompatEditText` 기반 재작성
 
 - `View` → `AppCompatEditText` 상속 변경
 - `ViewCompat.setOnReceiveContentListener` 등록
