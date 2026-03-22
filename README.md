@@ -227,21 +227,29 @@ interface NativeProps extends ViewProps {
 
 **목표**: iOS 키보드 및 클립보드 Rich Content를 인터셉트하고 JS로 전달한다.
 
-#### 2-1. `RichChatInputView.mm` — `UITextView` 기반 재작성
+#### ✅ 2-1. `RichChatInputView.mm` — `UITextView` 기반 재작성
 
-현재 스캐폴딩이 Objective-C++ (`.mm`) 파일이므로 Objective-C로 구현한다.
+Objective-C++ (`.mm`) 파일에 private 클래스 `RichChatInputInternalTextView : UITextView`를 도입하여 Fabric 래퍼(`RichChatInputView : RCTViewComponentView`)와 분리하는 구조로 구현.
 
-- `UIView` → `UITextView` 서브클래싱으로 교체
+- `UIView` → `RichChatInputInternalTextView` (`UITextView` 서브클래스)로 교체, `self.contentView`에 설정
 - `paste:` 메서드 오버라이드:
-  - `UIPasteboard.general`에서 이미지 타입 확인 (`image/gif`, `public.image` 등)
-  - 이미지 데이터를 `NSTemporaryDirectory()`에 파일로 저장
+  - GIF(`com.compuserve.gif`) → WebP → PNG → Generic Image → `super paste:` 순서로 인터셉트
+  - GIF는 `NSData` 직접 사용 (UIImage 변환 시 애니메이션 프레임 손실 방지)
+  - 이미지 데이터를 `NSTemporaryDirectory()`에 UUID 파일명으로 비동기 저장 (`dispatch_async`)
   - `file://` 경로와 `mimeType`을 `onRichContent` 이벤트로 발송
-  - 이미지가 아닌 경우 `super.paste(sender)` 호출로 기본 동작 유지
-- `placeholder`, `placeholderTextColor` 구현 (UITextView는 기본 placeholder 미지원 → 직접 구현)
+  - 이미지가 아닌 경우 `super paste:` 호출로 기본 텍스트 붙여넣기 동작 유지
+- `pasteConfiguration` 오버라이드로 iOS 11+ GIF 키보드 등 써드파티 키보드 제안 연동
+- `placeholder`, `placeholderTextColor` 구현 (`UILabel` 오버레이 방식, `UITextView`는 기본 미지원)
+- `editable`, `multiline`, `maxLength`, `acceptedMimeTypes` props 처리
+  - `multiline=false` 시 `UITextViewDelegate`에서 줄바꿈 문자 차단
+  - `maxLength` 초과 입력 `UITextViewDelegate`에서 차단
+- `onChangeText` 이벤트: `textViewDidChange:` delegate에서 발송
+- Fabric 뷰 재사용(`prepareForRecycle`) 시 텍스트/placeholder 초기화
 
-#### 2-2. `RichChatInputView.h` 업데이트
+#### ✅ 2-2. `RichChatInputView.h` 업데이트
 
-`UITextView` 기반으로 변경된 인터페이스 반영.
+- `@class RichChatInputInternalTextView` 포워드 선언
+- `dispatchChangeText:` / `dispatchRichContent:mimeType:` 메서드 선언
 
 ---
 
