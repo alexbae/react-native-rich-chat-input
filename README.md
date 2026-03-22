@@ -84,29 +84,27 @@ yarn add react-native-rich-chat-input
 ## Usage
 
 ```tsx
-import { RichChatInputView } from 'react-native-rich-chat-input';
+import { RichChatInput } from 'react-native-rich-chat-input';
+import type { RichContentResult } from 'react-native-rich-chat-input';
 import { useState } from 'react';
 import { Image, View } from 'react-native';
 
 export default function ChatScreen() {
-  const [richPreview, setRichPreview] = useState<{ uri: string; mimeType: string } | null>(null);
+  const [richPreview, setRichPreview] = useState<RichContentResult | null>(null);
 
   return (
     <View>
       {richPreview && (
         <Image source={{ uri: richPreview.uri }} style={{ width: 200, height: 200 }} />
       )}
-      <RichChatInputView
+      <RichChatInput
         placeholder="Type a message..."
         placeholderTextColor="#999"
         multiline
         maxLength={2000}
         acceptedMimeTypes={['image/*']}
-        onChangeText={(e) => console.log(e.nativeEvent.text)}
-        onRichContent={(e) => {
-          const nativeEvent = e.nativeEvent;
-          setRichPreview(nativeEvent);
-        }}
+        onChangeText={(text) => console.log(text)}
+        onRichContent={(content) => setRichPreview(content)}
       />
     </View>
   );
@@ -257,30 +255,48 @@ Objective-C++ (`.mm`) 파일에 private 클래스 `RichChatInputInternalTextView
 
 **목표**: 네이티브 컴포넌트를 사용하기 좋은 TypeScript API로 래핑한다.
 
-#### 3-1. `src/index.tsx` — 사용성 래퍼 컴포넌트 작성
+#### ✅ 3-1. `src/RichChatInput.tsx` — 사용성 래퍼 컴포넌트 작성
 
 `codegenNativeComponent`를 직접 노출하는 대신, 사용자 친화적인 래퍼 컴포넌트를 작성한다.
 
-```tsx
-// src/RichChatInput.tsx
-export interface RichContentResult {
-  uri: string;
-  mimeType: string;
-}
+- `onChangeText?: (text: string) => void` — `e.nativeEvent.text` 언래핑
+- `onRichContent?: (content: RichContentResult) => void` — `e.nativeEvent` 언래핑
+- `RichChatInputProps`, `RichContentResult` 타입 export
+- `src/index.tsx`에서 `RichChatInput`을 primary export, `RichChatInputView`(네이티브 원본)는 고급 사용자용으로 유지
+- `src/shims.d.ts` 추가 — `react-native/Libraries/Types/CodegenTypes` 모듈 타입 선언 누락 수정
 
-export interface RichChatInputProps {
-  onRichContent?: (content: RichContentResult) => void;
-  onChangeText?: (text: string) => void;
-  placeholder?: string;
-  // ... 기타 TextInput 호환 props
-}
+```tsx
+// 사용 예시
+import { RichChatInput } from 'react-native-rich-chat-input';
+
+<RichChatInput
+  onChangeText={(text) => setText(text)}
+  onRichContent={({ uri, mimeType }) => handleRich(uri, mimeType)}
+/>
 ```
 
 #### ✅ 3-2. 예제 앱 (`example/src/App.tsx`) 업데이트
 
 - 실제 동작 확인용 UI 구성
 - GIF/스티커 수신 → 프리뷰 이미지 표시
-- synthetic event pooling 이슈 수정: `setState` 콜백 내부에서 `e.nativeEvent` 직접 접근 시 null 오류 → 콜백 외부에서 변수에 먼저 저장하는 패턴으로 수정
+- `RichChatInput` 래퍼 컴포넌트로 교체하여 이벤트 핸들러 단순화 (`e.nativeEvent` 제거)
+
+#### ✅ 3-3. `src/__tests__/index.test.tsx` — Jest 단위 테스트 작성
+
+`react-test-renderer`를 사용하여 래퍼 컴포넌트의 이벤트 언래핑 로직과 prop 전달을 검증한다.
+
+| 테스트 | 검증 내용 |
+|---|---|
+| `onChangeText` unwrap | `{ nativeEvent: { text } }` → `string` 변환 |
+| `onChangeText` not provided | prop 미전달 시 네이티브 컴포넌트에 `undefined` 전달 |
+| `onRichContent` unwrap | `{ nativeEvent: { uri, mimeType } }` → 객체 변환 |
+| `onRichContent` not provided | prop 미전달 시 네이티브 컴포넌트에 `undefined` 전달 |
+| prop pass-through | `placeholder`, `editable`, `multiline` 등 나머지 props 그대로 전달 |
+
+```sh
+yarn test
+# Tests: 5 passed, 5 total
+```
 
 ---
 
@@ -292,8 +308,8 @@ export interface RichChatInputProps {
 - [ ] 캐시 파일 정리 전략 수립 (앱 재시작 시 or LRU)
 - [ ] Android 권한 예외 처리 (FileNotFoundException 등)
 - [ ] iOS 시뮬레이터 대응 (클립보드 제한)
-- [ ] Jest 단위 테스트 작성
-- [ ] README Usage 섹션 실제 코드로 업데이트
+- [x] Jest 단위 테스트 작성
+- [x] README Usage 섹션 실제 코드로 업데이트
 - [ ] npm publish 및 GitHub Release 자동화 검증
 
 ---
@@ -312,7 +328,11 @@ react-native-rich-chat-input/
 │   └── RichChatInputView.mm              # UITextView 기반 구현
 ├── src/
 │   ├── index.tsx                         # 퍼블릭 API 진입점
-│   └── RichChatInputViewNativeComponent.ts  # Codegen 명세 (네이티브 브릿지)
+│   ├── RichChatInput.tsx                 # 사용자 친화적 래퍼 컴포넌트
+│   ├── RichChatInputViewNativeComponent.ts  # Codegen 명세 (네이티브 브릿지)
+│   ├── shims.d.ts                        # CodegenTypes 모듈 타입 선언
+│   └── __tests__/
+│       └── index.test.tsx               # Jest 단위 테스트
 ├── example/                              # 예제 앱
 ├── RichChatInput.podspec                 # iOS CocoaPods 스펙
 └── package.json
