@@ -1,4 +1,4 @@
-package com.richchatinput
+package com.whosup.packages.richinput
 
 import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.NativeModule

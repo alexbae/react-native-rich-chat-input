@@ -1,4 +1,4 @@
-package com.richchatinput
+package com.whosup.packages.richinput
 
 import android.graphics.Color
 import com.facebook.react.module.annotations.ReactModule

@@ -1,4 +1,4 @@
-package com.richchatinput
+package com.whosup.packages.richinput
 
 import android.content.Context
 import android.util.AttributeSet

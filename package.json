@@ -114,7 +114,7 @@
     "type": "all",
     "jsSrcsDir": "src",
     "android": {
-      "javaPackageName": "com.richchatinput"
+      "javaPackageName": "com.whosup.packages.richinput"
     },
     "ios": {
       "components": {
