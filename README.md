@@ -98,10 +98,12 @@ export default function ChatScreen() {
       )}
       <RichChatInputView
         placeholder="Type a message..."
-        onRichContent={(event) => {
-          setRichPreview(event.nativeEvent);
-        }}
-        onChangeText={(text) => console.log(text)}
+        placeholderTextColor="#999"
+        multiline
+        maxLength={2000}
+        acceptedMimeTypes={['image/*']}
+        onChangeText={(e) => console.log(e.nativeEvent.text)}
+        onRichContent={(e) => setRichPreview(e.nativeEvent)}
       />
     </View>
   );
@@ -114,12 +116,19 @@ export default function ChatScreen() {
 
 ### Props
 
-| Prop | Type | Description |
-|---|---|---|
-| `placeholder` | `string` | 입력 힌트 텍스트 |
-| `placeholderTextColor` | `ColorValue` | 힌트 텍스트 색상 |
-| `onChangeText` | `(text: string) => void` | 텍스트 변경 콜백 |
-| `onRichContent` | `(event: RichContentEvent) => void` | Rich Content 수신 콜백 |
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `placeholder` | `string` | — | 입력 힌트 텍스트 |
+| `placeholderTextColor` | `ColorValue` | — | 힌트 텍스트 색상 |
+| `editable` | `boolean` | `true` | 입력 활성화 여부 |
+| `multiline` | `boolean` | `false` | 여러 줄 입력 허용 |
+| `maxLength` | `number` | — | 최대 입력 글자 수 |
+| `acceptedMimeTypes` | `string[]` | `['image/*']` | 수신할 MIME 타입 목록. 키보드에게 지원 콘텐츠 타입을 알리는 역할도 함 |
+| `onChangeText` | `BubblingEventHandler` | — | 텍스트 변경 이벤트 |
+| `onRichContent` | `BubblingEventHandler` | — | Rich Content 수신 이벤트 |
+| `style` | `ViewStyle` | — | 컨테이너 스타일 (width, height, borderRadius 등 레이아웃 스타일) |
+
+> **참고**: `color`, `fontSize`, `fontFamily` 등 텍스트 스타일 props는 v2에서 지원 예정입니다.
 
 ### Event: `onRichContent`
 
@@ -130,6 +139,29 @@ type RichContentEvent = {
     mimeType: string; // e.g. "image/gif", "image/png", "image/webp"
   };
 };
+```
+
+### Event: `onChangeText`
+
+```ts
+type ChangeTextEvent = {
+  nativeEvent: {
+    text: string;
+  };
+};
+```
+
+### `acceptedMimeTypes` 예시
+
+```tsx
+// 모든 이미지 (기본값 권장)
+acceptedMimeTypes={['image/*']}
+
+// GIF만 수신
+acceptedMimeTypes={['image/gif']}
+
+// 이미지 + 영상 (향후 확장)
+acceptedMimeTypes={['image/*', 'video/*']}
 ```
 
 ---
@@ -144,20 +176,25 @@ type RichContentEvent = {
 
 **목표**: 키보드/클립보드 Rich Content를 인터셉트하고 JS로 전달한다.
 
-#### 1-1. `RichChatInputViewNativeComponent.ts` 인터페이스 확정
+#### ✅ 1-1. `RichChatInputViewNativeComponent.ts` 인터페이스 확정
 
 ```ts
-// 추가할 내용
 type RichContentEvent = Readonly<{ uri: string; mimeType: string }>;
+type ChangeTextEvent = Readonly<{ text: string }>;
 
 interface NativeProps extends ViewProps {
   placeholder?: string;
   placeholderTextColor?: ColorValue;
+  editable?: boolean;
+  multiline?: boolean;
+  maxLength?: Int32;
+  acceptedMimeTypes?: string[];
+  onChangeText?: BubblingEventHandler<ChangeTextEvent>;
   onRichContent?: BubblingEventHandler<RichContentEvent>;
 }
 ```
 
-기존 스캐폴딩의 `color` prop은 제거한다.
+스캐폴딩 기본값인 `color` prop은 제거. **완료.**
 
 #### 1-2. `RichChatInputView.kt` — `AppCompatEditText` 기반 재작성
 
