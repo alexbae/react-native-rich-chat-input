@@ -84,29 +84,27 @@ yarn add react-native-rich-chat-input
 ## Usage
 
 ```tsx
-import { RichChatInputView } from 'react-native-rich-chat-input';
+import { RichChatInput } from 'react-native-rich-chat-input';
+import type { RichContentResult } from 'react-native-rich-chat-input';
 import { useState } from 'react';
 import { Image, View } from 'react-native';
 
 export default function ChatScreen() {
-  const [richPreview, setRichPreview] = useState<{ uri: string; mimeType: string } | null>(null);
+  const [richPreview, setRichPreview] = useState<RichContentResult | null>(null);
 
   return (
     <View>
       {richPreview && (
         <Image source={{ uri: richPreview.uri }} style={{ width: 200, height: 200 }} />
       )}
-      <RichChatInputView
+      <RichChatInput
         placeholder="Type a message..."
         placeholderTextColor="#999"
         multiline
         maxLength={2000}
         acceptedMimeTypes={['image/*']}
-        onChangeText={(e) => console.log(e.nativeEvent.text)}
-        onRichContent={(e) => {
-          const nativeEvent = e.nativeEvent;
-          setRichPreview(nativeEvent);
-        }}
+        onChangeText={(text) => console.log(text)}
+        onRichContent={(content) => setRichPreview(content)}
       />
     </View>
   );
@@ -257,30 +255,31 @@ Objective-C++ (`.mm`) 파일에 private 클래스 `RichChatInputInternalTextView
 
 **목표**: 네이티브 컴포넌트를 사용하기 좋은 TypeScript API로 래핑한다.
 
-#### 3-1. `src/index.tsx` — 사용성 래퍼 컴포넌트 작성
+#### ✅ 3-1. `src/RichChatInput.tsx` — 사용성 래퍼 컴포넌트 작성
 
 `codegenNativeComponent`를 직접 노출하는 대신, 사용자 친화적인 래퍼 컴포넌트를 작성한다.
 
-```tsx
-// src/RichChatInput.tsx
-export interface RichContentResult {
-  uri: string;
-  mimeType: string;
-}
+- `onChangeText?: (text: string) => void` — `e.nativeEvent.text` 언래핑
+- `onRichContent?: (content: RichContentResult) => void` — `e.nativeEvent` 언래핑
+- `RichChatInputProps`, `RichContentResult` 타입 export
+- `src/index.tsx`에서 `RichChatInput`을 primary export, `RichChatInputView`(네이티브 원본)는 고급 사용자용으로 유지
+- `src/shims.d.ts` 추가 — `react-native/Libraries/Types/CodegenTypes` 모듈 타입 선언 누락 수정
 
-export interface RichChatInputProps {
-  onRichContent?: (content: RichContentResult) => void;
-  onChangeText?: (text: string) => void;
-  placeholder?: string;
-  // ... 기타 TextInput 호환 props
-}
+```tsx
+// 사용 예시
+import { RichChatInput } from 'react-native-rich-chat-input';
+
+<RichChatInput
+  onChangeText={(text) => setText(text)}
+  onRichContent={({ uri, mimeType }) => handleRich(uri, mimeType)}
+/>
 ```
 
 #### ✅ 3-2. 예제 앱 (`example/src/App.tsx`) 업데이트
 
 - 실제 동작 확인용 UI 구성
 - GIF/스티커 수신 → 프리뷰 이미지 표시
-- synthetic event pooling 이슈 수정: `setState` 콜백 내부에서 `e.nativeEvent` 직접 접근 시 null 오류 → 콜백 외부에서 변수에 먼저 저장하는 패턴으로 수정
+- `RichChatInput` 래퍼 컴포넌트로 교체하여 이벤트 핸들러 단순화 (`e.nativeEvent` 제거)
 
 ---
 
@@ -293,7 +292,7 @@ export interface RichChatInputProps {
 - [ ] Android 권한 예외 처리 (FileNotFoundException 등)
 - [ ] iOS 시뮬레이터 대응 (클립보드 제한)
 - [ ] Jest 단위 테스트 작성
-- [ ] README Usage 섹션 실제 코드로 업데이트
+- [x] README Usage 섹션 실제 코드로 업데이트
 - [ ] npm publish 및 GitHub Release 자동화 검증
 
 ---

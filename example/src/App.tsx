@@ -8,16 +8,13 @@ import {
   Text,
   View,
 } from 'react-native';
-import { RichChatInputView } from 'react-native-rich-chat-input';
+import { RichChatInput } from 'react-native-rich-chat-input';
 
-interface RichContent {
-  uri: string;
-  mimeType: string;
-}
+import type { RichContentResult } from 'react-native-rich-chat-input';
 
 export default function App() {
   const [text, setText] = useState('');
-  const [richContents, setRichContents] = useState<RichContent[]>([]);
+  const [richContents, setRichContents] = useState<RichContentResult[]>([]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -50,17 +47,14 @@ export default function App() {
       </View>
 
       <View style={styles.inputWrapper}>
-        <RichChatInputView
+        <RichChatInput
           placeholder="Type a message or insert GIF..."
           placeholderTextColor="#999"
           multiline
           maxLength={2000}
           acceptedMimeTypes={['image/*']}
-          onChangeText={(e) => setText(e.nativeEvent.text)}
-          onRichContent={(e) => {
-            const nativeEvent = e.nativeEvent;
-            setRichContents((prev) => [nativeEvent, ...prev]);
-          }}
+          onChangeText={(text) => setText(text)}
+          onRichContent={(content) => setRichContents((prev) => [content, ...prev])}
           style={styles.input}
         />
       </View>
