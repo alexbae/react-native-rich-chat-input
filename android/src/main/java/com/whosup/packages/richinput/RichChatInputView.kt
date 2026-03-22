@@ -35,7 +35,7 @@ class RichChatInputView @JvmOverloads constructor(
 ) : AppCompatEditText(context, attrs, defStyleAttr) {
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var currentMimeTypes: Array<String> = arrayOf("image/*")
+    private var currentMimeTypes: Array<String> = DEFAULT_MIME_TYPES.copyOf()
 
     init {
         background = null
@@ -48,9 +48,22 @@ class RichChatInputView @JvmOverloads constructor(
 
     fun updateAcceptedMimeTypes(mimeTypes: ReadableArray?) {
         if (mimeTypes == null) return
-        val types = Array(mimeTypes.size()) { mimeTypes.getString(it) }
-        if (!types.contentEquals(currentMimeTypes)) {
-            currentMimeTypes = types
+        val sanitizedTypes = mutableListOf<String>()
+        for (index in 0 until mimeTypes.size()) {
+            val type = mimeTypes.getString(index)?.trim()
+            if (!type.isNullOrEmpty()) {
+                sanitizedTypes.add(type)
+            }
+        }
+
+        val nextMimeTypes = if (sanitizedTypes.isEmpty()) {
+            DEFAULT_MIME_TYPES
+        } else {
+            sanitizedTypes.distinct().toTypedArray()
+        }
+
+        if (!nextMimeTypes.contentEquals(currentMimeTypes)) {
+            currentMimeTypes = nextMimeTypes.copyOf()
             registerReceiveContentListener()
         }
     }
@@ -169,21 +182,30 @@ class RichChatInputView @JvmOverloads constructor(
         dispatchNativeEvent("topChangeText", params)
     }
 
+    private inner class NativeEvent(
+        surfaceId: Int,
+        viewId: Int,
+        private val name: String,
+        private val data: WritableMap,
+    ) : Event<NativeEvent>(surfaceId, viewId) {
+        override fun getEventName(): String = name
+        override fun getEventData(): WritableMap = data
+    }
+
     private fun dispatchNativeEvent(eventName: String, params: WritableMap) {
         if (id == View.NO_ID) return
         val reactContext = context as? ReactContext ?: return
         val surfaceId = UIManagerHelper.getSurfaceId(this)
         val eventDispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactContext, id)
-        eventDispatcher?.dispatchEvent(
-            object : Event<Event<*>>(surfaceId, id) {
-                override fun getEventName(): String = eventName
-                override fun getEventData(): WritableMap = params
-            }
-        )
+        eventDispatcher?.dispatchEvent(NativeEvent(surfaceId, id, eventName, params))
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         coroutineScope.cancel()
+    }
+
+    private companion object {
+        val DEFAULT_MIME_TYPES: Array<String> = arrayOf("image/*")
     }
 }

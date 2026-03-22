@@ -103,7 +103,10 @@ export default function ChatScreen() {
         maxLength={2000}
         acceptedMimeTypes={['image/*']}
         onChangeText={(e) => console.log(e.nativeEvent.text)}
-        onRichContent={(e) => setRichPreview(e.nativeEvent)}
+        onRichContent={(e) => {
+          const nativeEvent = e.nativeEvent;
+          setRichPreview(nativeEvent);
+        }}
       />
     </View>
   );
@@ -265,10 +268,11 @@ export interface RichChatInputProps {
 }
 ```
 
-#### 3-2. 예제 앱 (`example/src/App.tsx`) 업데이트
+#### ✅ 3-2. 예제 앱 (`example/src/App.tsx`) 업데이트
 
 - 실제 동작 확인용 UI 구성
 - GIF/스티커 수신 → 프리뷰 이미지 표시
+- synthetic event pooling 이슈 수정: `setState` 콜백 내부에서 `e.nativeEvent` 직접 접근 시 null 오류 → 콜백 외부에서 변수에 먼저 저장하는 패턴으로 수정
 
 ---
 
