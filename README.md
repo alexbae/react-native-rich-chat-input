@@ -205,11 +205,13 @@ interface NativeProps extends ViewProps {
   - 복사된 `file://` 경로와 `mimeType`을 이벤트로 발송
 - `placeholder`, `placeholderTextColor` prop 처리
 
-#### 1-3. `RichChatInputViewManager.kt` — 이벤트 및 Props 등록
+#### ✅ 1-3. `RichChatInputViewManager.kt` — 이벤트 및 Props 등록
 
 - `getExportedCustomBubblingEventTypeConstants()` 오버라이드하여 `onRichContent` 등록
 - `@ReactProp`으로 `placeholder`, `placeholderTextColor` 연결
 - `color` prop 제거
+
+`placeholder`, `placeholderTextColor`, `editable`, `multiline`, `maxLength`, `acceptedMimeTypes` props 연결 및 `onRichContent`/`onChangeText` 버블링 이벤트 등록 완료.
 
 #### 주의사항
 

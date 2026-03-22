@@ -1,6 +1,6 @@
 package com.whosup.packages.richinput
 
-import android.graphics.Color
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
@@ -30,9 +30,57 @@ class RichChatInputViewManager : SimpleViewManager<RichChatInputView>(),
     return RichChatInputView(context)
   }
 
-  @ReactProp(name = "color")
-  override fun setColor(view: RichChatInputView?, color: Int?) {
-    view?.setBackgroundColor(color ?: Color.TRANSPARENT)
+  @ReactProp(name = "placeholder")
+  override fun setPlaceholder(view: RichChatInputView?, value: String?) {
+    view?.hint = value
+  }
+
+  @ReactProp(name = "placeholderTextColor", customType = "Color")
+  override fun setPlaceholderTextColor(view: RichChatInputView?, value: Int?) {
+    if (value == null) {
+      view?.setHintTextColor(view.currentTextColor)
+      return
+    }
+    view?.setHintTextColor(value)
+  }
+
+  @ReactProp(name = "editable", defaultBoolean = true)
+  override fun setEditable(view: RichChatInputView?, value: Boolean) {
+    view?.updateEditable(value)
+  }
+
+  @ReactProp(name = "multiline", defaultBoolean = false)
+  override fun setMultiline(view: RichChatInputView?, value: Boolean) {
+    view?.updateMultiline(value)
+  }
+
+  @ReactProp(name = "maxLength", defaultInt = 0)
+  override fun setMaxLength(view: RichChatInputView?, value: Int) {
+    view?.updateMaxLength(value)
+  }
+
+  @ReactProp(name = "acceptedMimeTypes")
+  override fun setAcceptedMimeTypes(view: RichChatInputView?, value: ReadableArray?) {
+    view?.updateAcceptedMimeTypes(value)
+  }
+
+  override fun getExportedCustomBubblingEventTypeConstants(): MutableMap<String, Any> {
+    return mutableMapOf(
+      "topRichContent" to
+        mutableMapOf(
+          "phasedRegistrationNames" to
+            mutableMapOf(
+              "bubbled" to "onRichContent"
+            )
+        ),
+      "topChangeText" to
+        mutableMapOf(
+          "phasedRegistrationNames" to
+            mutableMapOf(
+              "bubbled" to "onChangeText"
+            )
+        )
+    )
   }
 
   companion object {
