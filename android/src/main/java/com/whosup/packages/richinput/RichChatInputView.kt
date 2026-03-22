@@ -10,7 +10,6 @@ import android.util.AttributeSet
 import android.view.Gravity
 import android.view.View
 import androidx.appcompat.widget.AppCompatEditText
-import androidx.core.view.ContentInfoCompat
 import androidx.core.view.OnReceiveContentListener
 import androidx.core.view.ViewCompat
 import com.facebook.react.bridge.Arguments
