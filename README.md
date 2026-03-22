@@ -136,7 +136,7 @@ export default function ChatScreen() {
 type RichContentEvent = {
   nativeEvent: {
     uri: string;      // file:// 로컬 캐시 경로
-    mimeType: string; // e.g. "image/gif", "image/png", "image/webp"
+    mimeType: string; // e.g. "image/gif", "image/png", "image/webp", "video/mp4"
   };
 };
 ```
@@ -160,7 +160,7 @@ acceptedMimeTypes={['image/*']}
 // GIF만 수신
 acceptedMimeTypes={['image/gif']}
 
-// 이미지 + 영상 (향후 확장)
+// 이미지 + 영상
 acceptedMimeTypes={['image/*', 'video/*']}
 ```
 
@@ -196,7 +196,7 @@ interface NativeProps extends ViewProps {
 
 스캐폴딩 기본값인 `color` prop은 제거. **완료.**
 
-#### 1-2. `RichChatInputView.kt` — `AppCompatEditText` 기반 재작성
+#### ✅ 1-2. `RichChatInputView.kt` — `AppCompatEditText` 기반 재작성
 
 - `View` → `AppCompatEditText` 상속 변경
 - `ViewCompat.setOnReceiveContentListener` 등록
