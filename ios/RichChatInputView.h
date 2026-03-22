@@ -6,7 +6,13 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class RichChatInputInternalTextView;
+
 @interface RichChatInputView : RCTViewComponentView
+
+- (void)dispatchChangeText:(NSString *)text;
+- (void)dispatchRichContent:(NSString *)uri mimeType:(NSString *)mimeType;
+
 @end
 
 NS_ASSUME_NONNULL_END
