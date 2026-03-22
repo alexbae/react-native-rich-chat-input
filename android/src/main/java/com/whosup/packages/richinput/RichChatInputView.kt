@@ -138,6 +138,10 @@ class RichChatInputView @JvmOverloads constructor(
         "png" in mimeType -> "png"
         "jpeg" in mimeType || "jpg" in mimeType -> "jpg"
         "svg" in mimeType -> "svg"
+        "mp4" in mimeType -> "mp4"
+        "webm" in mimeType -> "webm"
+        "3gp" in mimeType -> "3gp"
+        "mkv" in mimeType -> "mkv"
         else -> "bin"
     }
 

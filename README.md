@@ -136,7 +136,7 @@ export default function ChatScreen() {
 type RichContentEvent = {
   nativeEvent: {
     uri: string;      // file:// 로컬 캐시 경로
-    mimeType: string; // e.g. "image/gif", "image/png", "image/webp"
+    mimeType: string; // e.g. "image/gif", "image/png", "image/webp", "video/mp4"
   };
 };
 ```
@@ -160,7 +160,7 @@ acceptedMimeTypes={['image/*']}
 // GIF만 수신
 acceptedMimeTypes={['image/gif']}
 
-// 이미지 + 영상 (향후 확장)
+// 이미지 + 영상
 acceptedMimeTypes={['image/*', 'video/*']}
 ```
 
