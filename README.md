@@ -134,10 +134,11 @@ npm run android
 import { RichChatInput } from 'react-native-rich-chat-input';
 import type { RichContentResult } from 'react-native-rich-chat-input';
 import { useState } from 'react';
-import { Image, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 
 export default function ChatScreen() {
   const [richPreview, setRichPreview] = useState<RichContentResult | null>(null);
+  const [inputHeight, setInputHeight] = useState(44);
 
   return (
     <View>
@@ -150,12 +151,27 @@ export default function ChatScreen() {
         multiline
         maxLength={2000}
         acceptedMimeTypes={['image/*']}
+        style={[styles.input, { height: inputHeight }]}
         onChangeText={(text) => console.log(text)}
         onRichContent={(content) => setRichPreview(content)}
+        onInputSizeChange={({ height }) => {
+          // height = 텍스트 콘텐츠 높이 (padding 미포함)
+          // paddingVertical 12 × 2 = 24 추가; minHeight/maxHeight는 style로 제약
+          setInputHeight(height + 24);
+        }}
       />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  input: {
+    minHeight: 44,
+    maxHeight: 250,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+});
 ```
 
 ---
@@ -172,8 +188,9 @@ export default function ChatScreen() {
 | `multiline` | `boolean` | `false` | 여러 줄 입력 허용 |
 | `maxLength` | `number` | — | 최대 입력 글자 수 |
 | `acceptedMimeTypes` | `string[]` | `['image/*']` | 수신할 MIME 타입 목록. 키보드에게 지원 콘텐츠 타입을 알리는 역할도 함 |
-| `onChangeText` | `BubblingEventHandler` | — | 텍스트 변경 이벤트 |
-| `onRichContent` | `BubblingEventHandler` | — | Rich Content 수신 이벤트 |
+| `onChangeText` | `(text: string) => void` | — | 텍스트 변경 이벤트 |
+| `onRichContent` | `(content: RichContentResult) => void` | — | Rich Content 수신 이벤트 |
+| `onInputSizeChange` | `(size: ContentSizeResult) => void` | — | 텍스트 내용 높이 변경 이벤트. multiline 자동 확장 구현에 사용 |
 | `style` | `ViewStyle` | — | 컨테이너 스타일 (width, height, borderRadius 등 레이아웃 스타일) |
 
 > **참고**: `color`, `fontSize`, `fontFamily` 등 텍스트 스타일 props는 v2에서 지원 예정입니다.
@@ -187,6 +204,31 @@ type RichContentEvent = {
     mimeType: string; // e.g. "image/gif", "image/png", "image/webp", "video/mp4"
   };
 };
+```
+
+### Event: `onInputSizeChange`
+
+```ts
+type ContentSizeResult = {
+  width: number;  // dp (Android) / pt (iOS)
+  height: number; // 텍스트 콘텐츠 높이 (padding 제외)
+};
+```
+
+`multiline` 모드에서 텍스트가 바뀔 때마다 발생한다. `height` 값에 컴포넌트의 `paddingVertical * 2`를 더하면 컴포넌트 전체 높이가 된다.
+
+```tsx
+const [inputHeight, setInputHeight] = useState(44);
+
+<RichChatInput
+  multiline
+  style={[styles.input, { height: inputHeight }]} // minHeight/maxHeight로 범위 제한 권장
+  onInputSizeChange={({ height }) => {
+    // height = 텍스트 콘텐츠 높이 (padding 미포함)
+    // paddingVertical: 12 × 2 = 24 추가
+    setInputHeight(Math.max(44, Math.min(250, height + 24)));
+  }}
+/>
 ```
 
 ### Event: `onChangeText`
@@ -227,8 +269,11 @@ acceptedMimeTypes={['image/*', 'video/*']}
 #### ✅ 1-1. `RichChatInputViewNativeComponent.ts` 인터페이스 확정
 
 ```ts
+import type { BubblingEventHandler, Float, Int32 } from 'react-native/Libraries/Types/CodegenTypes';
+
 type RichContentEvent = Readonly<{ uri: string; mimeType: string }>;
 type ChangeTextEvent = Readonly<{ text: string }>;
+type ContentSizeChangeEvent = Readonly<{ width: Float; height: Float }>;
 
 interface NativeProps extends ViewProps {
   placeholder?: string;
@@ -239,10 +284,11 @@ interface NativeProps extends ViewProps {
   acceptedMimeTypes?: string[];
   onChangeText?: BubblingEventHandler<ChangeTextEvent>;
   onRichContent?: BubblingEventHandler<RichContentEvent>;
+  onInputSizeChange?: BubblingEventHandler<ContentSizeChangeEvent>;
 }
 ```
 
-스캐폴딩 기본값인 `color` prop은 제거. **완료.**
+스캐폴딩 기본값인 `color` prop은 제거. `number` 대신 `Float` 타입을 사용해야 Codegen이 `TSNumberKeyword` 오류 없이 처리한다. **완료.**
 
 #### ✅ 1-2. `RichChatInputView.kt` — `AppCompatEditText` 기반 재작성
 
@@ -319,18 +365,24 @@ iOS 소프트웨어 키보드는 RTI를 통해 XPC로 `insertText:`를 UITextVie
 
 **문제**: React re-render 시 `updateLayoutMetrics`가 호출되어 `_textView.frame`이 변경되면 RTI 연결이 끊김.
 
-**해결**: `updateLayoutMetrics` 오버라이드에서 first responder 상태일 때 frame 변경 후 이전 frame을 복원:
+**해결**: `updateLayoutMetrics` 오버라이드에서 first responder 상태일 때, JS가 `height`를 명시적으로 변경한 경우(multiline auto-expand)는 허용하고, 그 외 frame 변경(width, x, y 등)만 되돌린다.
 
 ```objc
 - (void)updateLayoutMetrics:... {
     CGRect frameBefore = _textView.frame;
     BOOL isFirstResponder = _textView.isFirstResponder;
+    CGFloat oldLayoutHeight = RCTCGRectFromRect(oldLayoutMetrics.getContentFrame()).size.height;
+    CGFloat newLayoutHeight = RCTCGRectFromRect(layoutMetrics.getContentFrame()).size.height;
+    BOOL layoutHeightChanged = fabs(newLayoutHeight - oldLayoutHeight) > 0.5;
     [super updateLayoutMetrics:...];
-    if (!CGRectEqualToRect(frameBefore, _textView.frame) && isFirstResponder) {
+    BOOL frameChanged = !CGRectEqualToRect(frameBefore, _textView.frame);
+    if (frameChanged && isFirstResponder && !layoutHeightChanged) {
         _textView.frame = frameBefore;
     }
 }
 ```
+
+`layoutHeightChanged`가 `true`이면 JS가 의도적으로 높이를 바꾼 것이므로 frame 복원을 건너뛴다. `onInputSizeChange` → `inputHeight` state 갱신 흐름으로 자동 확장이 동작하는 원리.
 
 #### ✅ 2-5. padding 영역 탭 전달
 
@@ -348,7 +400,8 @@ iOS 소프트웨어 키보드는 RTI를 통해 XPC로 `insertText:`를 UITextVie
 
 - `onChangeText?: (text: string) => void` — `e.nativeEvent.text` 언래핑
 - `onRichContent?: (content: RichContentResult) => void` — `e.nativeEvent` 언래핑
-- `RichChatInputProps`, `RichContentResult` 타입 export
+- `onInputSizeChange?: (size: ContentSizeResult) => void` — `e.nativeEvent` 언래핑. multiline 자동 확장용
+- `RichChatInputProps`, `RichContentResult`, `ContentSizeResult` 타입 export
 - `src/index.tsx`에서 `RichChatInput`을 primary export, `RichChatInputView`(네이티브 원본)는 고급 사용자용으로 유지
 - `src/shims.d.ts` 추가 — `react-native/Libraries/Types/CodegenTypes` 모듈 타입 선언 누락 수정
 
