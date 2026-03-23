@@ -190,7 +190,7 @@ const styles = StyleSheet.create({
 | `acceptedMimeTypes` | `string[]` | `['image/*']` | 수신할 MIME 타입 목록. 키보드에게 지원 콘텐츠 타입을 알리는 역할도 함 |
 | `onChangeText` | `(text: string) => void` | — | 텍스트 변경 이벤트 |
 | `onRichContent` | `(content: RichContentResult) => void` | — | Rich Content 수신 이벤트 |
-| `onInputSizeChange` | `(size: ContentSizeResult) => void` | — | 텍스트 내용 높이 변경 이벤트. multiline 자동 확장 구현에 사용 |
+| `onInputSizeChange` | `(size: ContentSizeResult) => void` | — | 텍스트 내용 높이 변경 이벤트. **`multiline` 사용 시 auto-expand에 필수**. `height` state와 함께 사용 (아래 예시 참고) |
 | `style` | `ViewStyle` | — | 컨테이너 스타일 (width, height, borderRadius 등 레이아웃 스타일) |
 
 > **참고**: `color`, `fontSize`, `fontFamily` 등 텍스트 스타일 props는 v2에서 지원 예정입니다.
@@ -388,6 +388,36 @@ iOS 소프트웨어 키보드는 RTI를 통해 XPC로 `insertText:`를 UITextVie
 
 컴포넌트에 `padding` 스타일이 적용된 경우 padding 영역은 `_textView` 바깥이므로 탭이 전달되지 않는 문제를 `hitTest:withEvent:` 오버라이드로 해결. 컴포넌트 bounds 내부 탭은 항상 `_textView`로 라우팅한다.
 
+#### ✅ 2-6. `onInputSizeChange` 높이 측정 타이밍 버그 수정
+
+**증상**:
+- `multiline` 모드에서 return을 눌러도 컴포넌트 높이가 변하지 않음
+- 시뮬레이터에서 `[TextInputUI] Result accumulator timeout: 0.250000, exceeded` 반복 출력
+
+**원인**: `_textStorageDidChange:`(`NSTextStorageDidProcessEditingNotification` 핸들러)가 `[super insertText:]` 호출 도중에 동기적으로 실행된다. 이 시점에 `sizeThatFits:`를 호출하면 내부적으로 `ensureLayoutForTextContainer:`가 트리거되는데, NSLayoutManager가 아직 편집 사이클 중이어서 **이전 레이아웃 결과(개행 전 높이)를 반환**한다. 결과적으로 `onInputSizeChange`가 변경 없는 높이로 발생하여 auto-expand가 동작하지 않는다. 동시에 `_state->updateState()` 호출이 Fabric의 main thread 작업을 유발해 RTI ack 전송이 250ms를 초과한다.
+
+**해결**: `sizeThatFits:` 측정과 `dispatchInputSizeChange:` 호출을 `dispatch_async(dispatch_get_main_queue(), ...)` 로 다음 runloop으로 연기한다. 이렇게 하면 NSTextStorage 편집 사이클이 완전히 종료된 후 레이아웃이 재계산되므로 정확한 높이를 얻을 수 있고, RTI ack도 즉시 반환된다.
+
+```objc
+// Before (잘못된 코드 — 편집 사이클 중 동기 측정)
+- (void)_textStorageDidChange:(NSNotification *)note {
+    ...
+    CGSize contentSize = [self sizeThatFits:...]; // 이전 높이 반환 가능
+    [self.eventDelegate dispatchInputSizeChange:contentSize];
+}
+
+// After (수정된 코드 — 다음 runloop에서 측정)
+- (void)_textStorageDidChange:(NSNotification *)note {
+    ...
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CGSize contentSize = [self sizeThatFits:...]; // 정확한 높이
+        [self.eventDelegate dispatchInputSizeChange:contentSize];
+    });
+}
+```
+
+> **중요**: `onInputSizeChange`는 shadow node 자동 측정 메커니즘의 보조 수단이 아닌 **multiline auto-expand의 필수 구현 수단**이다. 사용 측에서 반드시 `inputHeight` state를 관리하고 `style={{ height: inputHeight }}`를 명시적으로 전달해야 한다. 핸들러를 생략하면 높이가 `minHeight`(기본 44)에 고정된다.
+
 ---
 
 ### Phase 3 — JS/TS Bridge 완성
@@ -448,6 +478,7 @@ yarn test
 - [x] 캐시 파일 정리 전략 수립 (앱 재시작 시 or LRU)
 - [x] Android 권한 예외 처리 (FileNotFoundException 등)
 - [x] iOS 시뮬레이터 대응 (클립보드 제한)
+- [x] iOS `onInputSizeChange` 높이 측정 타이밍 버그 수정 (dispatch_async)
 - [x] Jest 단위 테스트 작성
 - [x] README Usage 섹션 실제 코드로 업데이트
 - [x] npm publish 및 GitHub Release 자동화 검증
@@ -553,6 +584,34 @@ cd <your-app>/ios
 rm -rf build/generated Pods Podfile.lock
 pod install
 ```
+
+---
+
+### multiline 모드에서 높이가 변하지 않음 (iOS)
+
+return 키를 눌러도 컴포넌트 높이가 `minHeight`에 고정되는 경우, `onInputSizeChange` 핸들러가 없거나 `height` state를 style에 전달하지 않은 것이 원인이다.
+
+```tsx
+// ❌ 잘못된 사용 — shadow node 자동 측정에만 의존 (동작하지 않음)
+<RichChatInput multiline style={styles.input} />
+
+// ✅ 올바른 사용 — onInputSizeChange로 height state 관리
+const [inputHeight, setInputHeight] = useState(44);
+
+<RichChatInput
+  multiline
+  style={[styles.input, { height: inputHeight }]}
+  onInputSizeChange={({ height }) => {
+    setInputHeight(height + paddingVertical * 2);
+  }}
+/>
+```
+
+---
+
+### `[TextInputUI] Result accumulator timeout: 0.250000, exceeded` (iOS 시뮬레이터)
+
+iOS 시뮬레이터 전용 경고로 실제 디바이스에서는 발생하지 않는다. 시뮬레이터의 소프트웨어 키보드가 Mac 키보드를 RTI(Remote Text Input)로 전달할 때, 핸들러에서 동기적으로 Fabric 작업을 수행하면 250ms 내에 RTI ack를 반환하지 못해 발생한다. v2.6 이후(Phase 2-6) `dispatch_async` 처리로 해소됐다. 이 경고가 보이면 라이브러리 버전을 확인한다.
 
 ---
 

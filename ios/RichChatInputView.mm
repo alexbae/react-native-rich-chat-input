@@ -2,10 +2,10 @@
 
 #import <React/RCTConversions.h>
 
-#import <react/renderer/components/RichChatInputViewSpec/ComponentDescriptors.h>
 #import <react/renderer/components/RichChatInputViewSpec/EventEmitters.h>
 #import <react/renderer/components/RichChatInputViewSpec/Props.h>
 #import <react/renderer/components/RichChatInputViewSpec/RCTComponentViewHelpers.h>
+#import "RichChatInputMeasuringShadowNode.h"
 
 #import "RCTFabricComponentsPlugins.h"
 
@@ -110,12 +110,23 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     if (!(storage.editedMask & NSTextStorageEditedCharacters)) return;
     [self updatePlaceholderVisibility];
     [self.eventDelegate dispatchChangeText:self.text];
-    // Dispatch content size so consumers can auto-expand the input height.
-    // Use the current bounds width (or a large fallback on first layout) to
-    // compute how tall the text view wants to be.
-    CGFloat measureWidth = self.bounds.size.width > 0 ? self.bounds.size.width : 1000;
-    CGSize contentSize = [self sizeThatFits:CGSizeMake(measureWidth, CGFLOAT_MAX)];
-    [self.eventDelegate dispatchInputSizeChange:contentSize];
+    // Defer size measurement to the next run loop iteration.
+    //
+    // NSTextStorageDidProcessEditingNotification fires while NSLayoutManager has
+    // only *invalidated* the layout — it has not yet re-laid out the text.
+    // Calling sizeThatFits: synchronously at this point causes ensureLayoutForTextContainer:
+    // to run inside the still-active editing cycle, which can return the pre-edit
+    // height (newline not yet accounted for), preventing the height from expanding.
+    // Deferring to the next run loop also lets the RTI acknowledgement return
+    // immediately, avoiding [TextInputUI] Result accumulator timeout warnings.
+    __weak RichChatInputInternalTextView *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong RichChatInputInternalTextView *strongSelf = weakSelf;
+        if (!strongSelf || !strongSelf.window) return;
+        CGFloat measureWidth = strongSelf.bounds.size.width > 0 ? strongSelf.bounds.size.width : 1000;
+        CGSize contentSize = [strongSelf sizeThatFits:CGSizeMake(measureWidth, CGFLOAT_MAX)];
+        [strongSelf.eventDelegate dispatchInputSizeChange:contentSize];
+    });
 }
 
 // -insertText: is the UITextInput entry point for all keyboard-driven input
@@ -315,10 +326,11 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 
 @implementation RichChatInputView {
     RichChatInputInternalTextView *_textView;
+    RichChatInputMeasuringShadowNode::ConcreteState::Shared _state;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider {
-    return concreteComponentDescriptorProvider<RichChatInputViewComponentDescriptor>();
+    return concreteComponentDescriptorProvider<RichChatInputMeasuringComponentDescriptor>();
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -424,10 +436,16 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     [super updateProps:props oldProps:oldProps];
 }
 
+- (void)updateState:(const facebook::react::State::Shared &)state
+          oldState:(const facebook::react::State::Shared &)oldState {
+    _state = std::static_pointer_cast<const RichChatInputMeasuringShadowNode::ConcreteState>(state);
+}
+
 - (void)prepareForRecycle {
     [super prepareForRecycle];
     _textView.text = @"";
     [_textView updatePlaceholderVisibility];
+    _state = nullptr;
 }
 
 #pragma mark - Event dispatch (called from RichChatInputInternalTextView)
@@ -450,6 +468,19 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 }
 
 - (void)dispatchInputSizeChange:(CGSize)size {
+    // Update Fabric shadow node state directly — this triggers a native layout
+    // pass (Yoga calls measureContent) without any JS round-trip, so the input
+    // height grows in the same frame as the cursor movement.
+    if (_state) {
+        RichChatInputMeasuringStateData newStateData;
+        newStateData.contentHeight = (float)size.height;
+        if (newStateData != _state->getData()) {
+            _state->updateState(std::move(newStateData));
+        }
+    }
+
+    // Also emit the JS event for backward-compat (e.g. callers that still use
+    // onInputSizeChange to drive other UI outside the input height).
     if (!_eventEmitter) return;
     auto emitter = std::static_pointer_cast<RichChatInputViewEventEmitter const>(_eventEmitter);
     emitter->onInputSizeChange(RichChatInputViewEventEmitter::OnInputSizeChange{
