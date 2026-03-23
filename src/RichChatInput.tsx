@@ -6,6 +6,11 @@ export interface RichContentResult {
   mimeType: string;
 }
 
+export interface ContentSizeResult {
+  width: number;
+  height: number;
+}
+
 export interface RichChatInputProps {
   placeholder?: string;
   placeholderTextColor?: string;
@@ -16,10 +21,11 @@ export interface RichChatInputProps {
   style?: StyleProp<ViewStyle>;
   onChangeText?: (text: string) => void;
   onRichContent?: (content: RichContentResult) => void;
+  onInputSizeChange?: (size: ContentSizeResult) => void;
 }
 
 export function RichChatInput(props: RichChatInputProps) {
-  const { onChangeText, onRichContent, ...rest } = props;
+  const { onChangeText, onRichContent, onInputSizeChange, ...rest } = props;
 
   return (
     <NativeRichChatInputView
@@ -34,6 +40,12 @@ export function RichChatInput(props: RichChatInputProps) {
         onRichContent
           ? (e: NativeSyntheticEvent<RichContentResult>) =>
               onRichContent(e.nativeEvent)
+          : undefined
+      }
+      onInputSizeChange={
+        onInputSizeChange
+          ? (e: NativeSyntheticEvent<ContentSizeResult>) =>
+              onInputSizeChange(e.nativeEvent)
           : undefined
       }
     />

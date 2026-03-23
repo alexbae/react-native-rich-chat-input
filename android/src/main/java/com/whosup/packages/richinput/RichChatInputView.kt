@@ -218,6 +218,7 @@ class RichChatInputView @JvmOverloads constructor(
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 dispatchChangeTextEvent(s?.toString() ?: "")
+                dispatchInputSizeChangeEvent()
             }
         })
     }
@@ -235,6 +236,19 @@ class RichChatInputView @JvmOverloads constructor(
             putString("text", text)
         }
         dispatchNativeEvent("topChangeText", params)
+    }
+
+    private fun dispatchInputSizeChangeEvent() {
+        val textLayout = layout ?: return
+        val density = resources.displayMetrics.density
+        // textLayout.height is the height of the text content in pixels.
+        // compoundPaddingTop/Bottom includes any internal padding (0 for this view).
+        val contentHeightPx = textLayout.height + compoundPaddingTop + compoundPaddingBottom
+        val params = Arguments.createMap().apply {
+            putDouble("width", (width / density).toDouble())
+            putDouble("height", (contentHeightPx / density).toDouble())
+        }
+        dispatchNativeEvent("topInputSizeChange", params)
     }
 
     private inner class NativeEvent(

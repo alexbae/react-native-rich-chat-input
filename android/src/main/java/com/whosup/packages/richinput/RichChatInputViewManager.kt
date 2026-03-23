@@ -79,6 +79,13 @@ class RichChatInputViewManager : SimpleViewManager<RichChatInputView>(),
             mutableMapOf(
               "bubbled" to "onChangeText"
             )
+        ),
+      "topInputSizeChange" to
+        mutableMapOf(
+          "phasedRegistrationNames" to
+            mutableMapOf(
+              "bubbled" to "onInputSizeChange"
+            )
         )
     )
   }

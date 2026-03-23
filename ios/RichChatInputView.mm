@@ -110,6 +110,12 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     if (!(storage.editedMask & NSTextStorageEditedCharacters)) return;
     [self updatePlaceholderVisibility];
     [self.eventDelegate dispatchChangeText:self.text];
+    // Dispatch content size so consumers can auto-expand the input height.
+    // Use the current bounds width (or a large fallback on first layout) to
+    // compute how tall the text view wants to be.
+    CGFloat measureWidth = self.bounds.size.width > 0 ? self.bounds.size.width : 1000;
+    CGSize contentSize = [self sizeThatFits:CGSizeMake(measureWidth, CGFLOAT_MAX)];
+    [self.eventDelegate dispatchInputSizeChange:contentSize];
 }
 
 // -insertText: is the UITextInput entry point for all keyboard-driven input
@@ -334,19 +340,26 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 - (void)updateLayoutMetrics:(const facebook::react::LayoutMetrics &)layoutMetrics
            oldLayoutMetrics:(const facebook::react::LayoutMetrics &)oldLayoutMetrics
 {
-    // Let super set _contentView.frame = contentFrame (bounds minus style padding).
-    // We do NOT override _textView.frame here because changing the frame after the
-    // RTI input session starts breaks the Remote Text Input system's reference to
-    // the text view — insertText: stops being delivered and textViewDidChange never
-    // fires. The padding is already encoded in contentFrame via Yoga insets.
     CGRect frameBefore = _textView.frame;
     BOOL isFirstResponder = _textView.isFirstResponder;
+
+    // Detect whether JS has intentionally requested a new height (e.g. via
+    // onContentSizeChange → setState). If so, we allow the frame change so
+    // the input can auto-expand. Spurious re-renders that repeat the same
+    // layout metrics are still blocked to protect the RTI session.
+    CGFloat oldLayoutHeight = RCTCGRectFromRect(oldLayoutMetrics.getContentFrame()).size.height;
+    CGFloat newLayoutHeight = RCTCGRectFromRect(layoutMetrics.getContentFrame()).size.height;
+    BOOL layoutHeightChanged = fabs(newLayoutHeight - oldLayoutHeight) > 0.5;
+
     [super updateLayoutMetrics:layoutMetrics oldLayoutMetrics:oldLayoutMetrics];
+
     CGRect frameAfter = _textView.frame;
     BOOL frameChanged = !CGRectEqualToRect(frameBefore, frameAfter);
-    // If frame changed while the text view is first responder, RTI will be disconnected.
-    // Restore the frame to prevent RTI breakage.
-    if (frameChanged && isFirstResponder) {
+    // Only restore frame when: first responder AND frame changed AND the layout
+    // height itself did NOT change. Allowing intentional height changes (driven
+    // by onContentSizeChange) lets the input auto-expand while blocking spurious
+    // Fabric layout passes that would disconnect the RTI session.
+    if (frameChanged && isFirstResponder && !layoutHeightChanged) {
         _textView.frame = frameBefore;
     }
 }
@@ -433,6 +446,15 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     emitter->onRichContent(RichChatInputViewEventEmitter::OnRichContent{
         .uri      = std::string(uri.UTF8String ?: ""),
         .mimeType = std::string(mimeType.UTF8String ?: "")
+    });
+}
+
+- (void)dispatchInputSizeChange:(CGSize)size {
+    if (!_eventEmitter) return;
+    auto emitter = std::static_pointer_cast<RichChatInputViewEventEmitter const>(_eventEmitter);
+    emitter->onInputSizeChange(RichChatInputViewEventEmitter::OnInputSizeChange{
+        .width  = (double)size.width,
+        .height = (double)size.height
     });
 }
 
