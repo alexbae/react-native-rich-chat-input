@@ -1,6 +1,9 @@
-import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
+import { codegenNativeComponent } from 'react-native';
 import type { ColorValue, ViewProps } from 'react-native';
-import type { BubblingEventHandler, Int32 } from 'react-native/Libraries/Types/CodegenTypes';
+import type {
+  BubblingEventHandler,
+  Int32,
+} from 'react-native/Libraries/Types/CodegenTypes';
 
 type RichContentEvent = Readonly<{
   uri: string;
