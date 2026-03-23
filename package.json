@@ -93,6 +93,9 @@
     "example"
   ],
   "packageManager": "yarn@4.11.0",
+  "resolutions": {
+    "arktype": "2.1.29"
+  },
   "react-native-builder-bob": {
     "source": "src",
     "output": "lib",

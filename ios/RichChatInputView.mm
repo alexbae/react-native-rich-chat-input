@@ -18,7 +18,7 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 #pragma mark - RichChatInputInternalTextView
 // ---------------------------------------------------------------------------
 
-@interface RichChatInputInternalTextView : UITextView <UITextViewDelegate>
+@interface RichChatInputInternalTextView : UITextView
 
 @property (nonatomic, weak, nullable) RichChatInputView *eventDelegate;
 @property (nonatomic, copy, nullable) NSString *placeholderText;
@@ -37,9 +37,16 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        self.delegate = self;
+        // Do NOT set self.delegate = self here.
+        // KCTextInputCompositeDelegate (react-native-keyboard-controller) replaces the
+        // UITextView delegate on focus and saves the old delegate as its forwarding target.
+        // If the saved target is the UITextView itself, UITextView's own forwarding path
+        // bounces the call back to KCTextInputCompositeDelegate → infinite recursion → crash.
+        // Instead, constraints (maxLength, multiline) are enforced via -insertText: override.
         self.backgroundColor = [UIColor clearColor];
         self.scrollEnabled = YES;
+        // textContainerInset is set dynamically by RichChatInputView.updateLayoutMetrics
+        // to mirror the padding values from the React style.
         self.textContainerInset = UIEdgeInsetsZero;
         self.textContainer.lineFragmentPadding = 0;
         self.font = [UIFont systemFontOfSize:17.0];
@@ -56,6 +63,15 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
         _placeholderLabel.font = self.font;
         _placeholderLabel.textColor = [UIColor placeholderTextColor];
         [self addSubview:_placeholderLabel];
+
+        // NSTextStorageDidProcessEditingNotification fires from NSTextStorage itself
+        // (lower than UITextViewDelegate), so it fires regardless of who the
+        // UITextView delegate is — including when react-native-keyboard-controller
+        // installs KCTextInputCompositeDelegate and blocks textViewDidChange:.
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(_textStorageDidChange:)
+                                                     name:NSTextStorageDidProcessEditingNotification
+                                                   object:self.textStorage];
 
         [self _cleanStaleTempFiles];
     }
@@ -88,31 +104,42 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     _placeholderLabel.hidden = (self.text.length > 0);
 }
 
-#pragma mark UITextViewDelegate
-
-- (void)textViewDidChange:(UITextView *)textView {
+- (void)_textStorageDidChange:(NSNotification *)note {
+    NSTextStorage *storage = note.object;
+    // Only react to character edits (not attribute-only changes like spell-check highlights)
+    if (!(storage.editedMask & NSTextStorageEditedCharacters)) return;
     [self updatePlaceholderVisibility];
-    [self.eventDelegate dispatchChangeText:textView.text];
+    [self.eventDelegate dispatchChangeText:self.text];
 }
 
-- (BOOL)textView:(UITextView *)textView
-    shouldChangeTextInRange:(NSRange)range
-    replacementText:(NSString *)text {
-
-    // maxLength 강제
-    if (self.maxLength > 0) {
-        NSUInteger newLen = textView.text.length - range.length + text.length;
-        if (newLen > (NSUInteger)self.maxLength) return NO;
-    }
-
-    // single-line에서 줄바꿈 차단
+// -insertText: is the UITextInput entry point for all keyboard-driven input
+// (character typing, autocorrect replacements, predictive text, etc.).
+// Enforcing constraints here replaces the UITextViewDelegate shouldChangeTextInRange:
+// approach, which required self.delegate = self — the source of the
+// KCTextInputCompositeDelegate infinite-recursion crash.
+- (void)insertText:(NSString *)text {
+    // single-line: block newlines
     if (!self.multiline) {
         if ([text rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]].location != NSNotFound) {
-            return NO;
+            return;
         }
     }
 
-    return YES;
+    // maxLength: account for the selected range that will be replaced
+    if (self.maxLength > 0) {
+        NSRange selectedRange = self.selectedRange;
+        NSUInteger currentLen = self.text.length;
+        NSUInteger replaceLen = (selectedRange.location != NSNotFound) ? selectedRange.length : 0;
+        NSUInteger newLen = currentLen - replaceLen + text.length;
+        if (newLen > (NSUInteger)self.maxLength) {
+            // Insert only as many characters as the budget allows
+            NSUInteger budget = (NSUInteger)self.maxLength - (currentLen - replaceLen);
+            if (budget == 0) return;
+            text = [text substringToIndex:MIN(budget, text.length)];
+        }
+    }
+
+    [super insertText:text];
 }
 
 #pragma mark - Paste interception
@@ -295,11 +322,42 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 
         _textView = [[RichChatInputInternalTextView alloc] initWithFrame:self.bounds];
         _textView.eventDelegate = self;
-        _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-
+        // Use contentView so Fabric properly tracks this subview.
+        // updateLayoutMetrics below overrides the frame back to full bounds after super
+        // applies the padding-reduced content frame, so the text view always fills the
+        // entire component while textContainerInset handles the visual padding.
         self.contentView = _textView;
     }
     return self;
+}
+
+- (void)updateLayoutMetrics:(const facebook::react::LayoutMetrics &)layoutMetrics
+           oldLayoutMetrics:(const facebook::react::LayoutMetrics &)oldLayoutMetrics
+{
+    // Let super set _contentView.frame = contentFrame (bounds minus style padding).
+    // We do NOT override _textView.frame here because changing the frame after the
+    // RTI input session starts breaks the Remote Text Input system's reference to
+    // the text view — insertText: stops being delivered and textViewDidChange never
+    // fires. The padding is already encoded in contentFrame via Yoga insets.
+    CGRect frameBefore = _textView.frame;
+    BOOL isFirstResponder = _textView.isFirstResponder;
+    [super updateLayoutMetrics:layoutMetrics oldLayoutMetrics:oldLayoutMetrics];
+    CGRect frameAfter = _textView.frame;
+    BOOL frameChanged = !CGRectEqualToRect(frameBefore, frameAfter);
+    // If frame changed while the text view is first responder, RTI will be disconnected.
+    // Restore the frame to prevent RTI breakage.
+    if (frameChanged && isFirstResponder) {
+        _textView.frame = frameBefore;
+    }
+}
+
+// Forward all taps inside the component (including padding area) to _textView
+// so the keyboard opens even when the user taps near the edges.
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (CGRectContainsPoint(self.bounds, point) && _textView && !_textView.isHidden) {
+        return _textView;
+    }
+    return [super hitTest:point withEvent:event];
 }
 
 - (void)updateProps:(Props::Shared const &)props oldProps:(Props::Shared const &)oldProps {
