@@ -21,7 +21,9 @@ describe('RichChatInput', () => {
       const renderer = render(<RichChatInput onChangeText={onChangeText} />);
 
       act(() => {
-        getNativeProps(renderer).onChangeText({ nativeEvent: { text: 'hello' } });
+        getNativeProps(renderer).onChangeText({
+          nativeEvent: { text: 'hello' },
+        });
       });
 
       expect(onChangeText).toHaveBeenCalledWith('hello');

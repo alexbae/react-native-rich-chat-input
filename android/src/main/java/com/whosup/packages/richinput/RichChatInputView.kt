@@ -7,6 +7,7 @@ import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
 import android.util.AttributeSet
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import androidx.appcompat.widget.AppCompatEditText
@@ -44,6 +45,7 @@ class RichChatInputView @JvmOverloads constructor(
         inputType = InputType.TYPE_CLASS_TEXT
         registerReceiveContentListener()
         setupTextWatcher()
+        cleanStaleCacheFiles()
     }
 
     fun updateAcceptedMimeTypes(mimeTypes: ReadableArray?) {
@@ -127,20 +129,73 @@ class RichChatInputView @JvmOverloads constructor(
     private fun copyToCache(contentUri: Uri): Pair<String, String>? {
         return try {
             val contentResolver = context.contentResolver
-            val mimeType = contentResolver.getType(contentUri) ?: return null
+            val mimeType = contentResolver.getType(contentUri)
+            if (mimeType == null) {
+                Log.e(TAG, "Cannot resolve MIME type for URI: $contentUri")
+                return null
+            }
             val extension = mimeTypeToExtension(mimeType)
             val fileName = "rich_content_${UUID.randomUUID()}.$extension"
             val cacheFile = File(context.cacheDir, fileName)
 
-            contentResolver.openInputStream(contentUri)?.use { input ->
+            val inputStream = try {
+                contentResolver.openInputStream(contentUri)
+            } catch (e: java.io.FileNotFoundException) {
+                Log.e(TAG, "Content URI not found (expired?): $contentUri", e)
+                return null
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Permission denied for URI: $contentUri", e)
+                return null
+            }
+
+            if (inputStream == null) {
+                Log.e(TAG, "openInputStream returned null for URI: $contentUri")
+                return null
+            }
+
+            inputStream.use { input ->
+                var totalBytes = 0L
                 FileOutputStream(cacheFile).use { output ->
-                    input.copyTo(output)
+                    val buffer = ByteArray(8 * 1024)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        totalBytes += read
+                        if (totalBytes > MAX_FILE_SIZE_BYTES) {
+                            Log.w(TAG, "File exceeds ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit, aborting copy")
+                            output.flush()
+                            cacheFile.delete()
+                            return null
+                        }
+                        output.write(buffer, 0, read)
+                    }
                 }
-            } ?: return null
+            }
 
             Pair(Uri.fromFile(cacheFile).toString(), mimeType)
-        } catch (e: Exception) {
+        } catch (e: java.io.IOException) {
+            Log.e(TAG, "I/O error copying content to cache", e)
             null
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error copying content to cache", e)
+            null
+        }
+    }
+
+    private fun cleanStaleCacheFiles() {
+        coroutineScope.launch {
+            withContext(Dispatchers.IO) {
+                val now = System.currentTimeMillis()
+                context.cacheDir
+                    .listFiles { file ->
+                        file.name.startsWith("rich_content_") &&
+                            (now - file.lastModified()) > CACHE_MAX_AGE_MS
+                    }
+                    ?.forEach { file ->
+                        if (!file.delete()) {
+                            Log.w(TAG, "Failed to delete stale cache file: ${file.name}")
+                        }
+                    }
+            }
         }
     }
 
@@ -207,5 +262,8 @@ class RichChatInputView @JvmOverloads constructor(
 
     private companion object {
         val DEFAULT_MIME_TYPES: Array<String> = arrayOf("image/*")
+        const val MAX_FILE_SIZE_BYTES = 20L * 1024L * 1024L  // 20 MB
+        const val CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L  // 7일
+        const val TAG = "RichChatInput"
     }
 }

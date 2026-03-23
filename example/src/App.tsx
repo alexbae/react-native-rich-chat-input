@@ -23,17 +23,28 @@ export default function App() {
         <Text style={styles.headerSub}>Platform: {Platform.OS}</Text>
       </View>
 
-      <ScrollView style={styles.previewArea} contentContainerStyle={styles.previewContent}>
+      <ScrollView
+        style={styles.previewArea}
+        contentContainerStyle={styles.previewContent}
+      >
         {richContents.length === 0 ? (
           <Text style={styles.emptyHint}>
-            {'Keyboard\uc5d0\uc11c GIF/\uc774\ubbf8\uc9c0\ub97c \ubd99\uc5ec\ub123\uc73c\uba74 \ud504\ub9ac\ubdf0\uac00 \ud45c\uc2dc\ub429\ub2c8\ub2e4'}
+            {
+              'Keyboard\uc5d0\uc11c GIF/\uc774\ubbf8\uc9c0\ub97c \ubd99\uc5ec\ub123\uc73c\uba74 \ud504\ub9ac\ubdf0\uac00 \ud45c\uc2dc\ub429\ub2c8\ub2e4'
+            }
           </Text>
         ) : (
           richContents.map((item, index) => (
             <View key={index} style={styles.previewItem}>
-              <Image source={{ uri: item.uri }} style={styles.previewImage} resizeMode="contain" />
+              <Image
+                source={{ uri: item.uri }}
+                style={styles.previewImage}
+                resizeMode="contain"
+              />
               <Text style={styles.mimeText}>{item.mimeType}</Text>
-              <Text style={styles.uriText} numberOfLines={2}>{item.uri}</Text>
+              <Text style={styles.uriText} numberOfLines={2}>
+                {item.uri}
+              </Text>
             </View>
           ))
         )}
@@ -54,7 +65,9 @@ export default function App() {
           maxLength={2000}
           acceptedMimeTypes={['image/*']}
           onChangeText={(text) => setText(text)}
-          onRichContent={(content) => setRichContents((prev) => [content, ...prev])}
+          onRichContent={(content) =>
+            setRichContents((prev) => [content, ...prev])
+          }
           style={styles.input}
         />
       </View>
