@@ -34,7 +34,7 @@
   "scripts": {
     "example": "yarn workspace react-native-rich-chat-input-example",
     "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
-    "prepare": "bob build",
+    "prepare": "",
     "typecheck": "tsc",
     "test": "jest",
     "release": "release-it --only-version",
