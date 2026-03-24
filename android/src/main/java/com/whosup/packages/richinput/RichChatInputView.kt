@@ -41,7 +41,7 @@ class RichChatInputView @JvmOverloads constructor(
     init {
         background = null
         setPadding(0, 0, 0, 0)
-        gravity = Gravity.TOP or Gravity.START
+        gravity = Gravity.CENTER_VERTICAL or Gravity.START
         inputType = InputType.TYPE_CLASS_TEXT
         registerReceiveContentListener()
         setupTextWatcher()
