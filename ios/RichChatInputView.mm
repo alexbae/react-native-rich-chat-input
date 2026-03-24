@@ -106,28 +106,8 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 
 - (void)_textStorageDidChange:(NSNotification *)note {
     NSTextStorage *storage = note.object;
-    NSUInteger mask = storage.editedMask;
-    BOOL isCharEdit = (mask & NSTextStorageEditedCharacters) != 0;
-    BOOL isAttrEdit = (mask & NSTextStorageEditedAttributes) != 0;
-
-    // Skip notifications that involve neither character nor attribute changes.
-    if (!isCharEdit && !isAttrEdit) return;
-
-    // For attribute-only edits, only proceed if an NSTextAttachment is present.
-    // NSAdaptiveImageGlyph (Genmoji, iOS 18+) may only fire NSTextStorageEditedAttributes
-    // without setting NSTextStorageEditedCharacters; all other attribute-only edits
-    // (spell-check highlights, etc.) should be ignored to avoid spurious dispatches.
-    if (!isCharEdit && isAttrEdit) {
-        __block BOOL hasAttachment = NO;
-        [storage enumerateAttribute:NSAttachmentAttributeName
-                            inRange:NSMakeRange(0, storage.length)
-                            options:NSAttributedStringEnumerationLongestEffectiveRangeNotRequired
-                         usingBlock:^(id _Nullable value, NSRange range, BOOL *stop) {
-            if (value != nil) { hasAttachment = YES; *stop = YES; }
-        }];
-        if (!hasAttachment) return;
-    }
-
+    // Only react to character edits (not attribute-only changes like spell-check highlights)
+    if (!(storage.editedMask & NSTextStorageEditedCharacters)) return;
     [self updatePlaceholderVisibility];
     [self.eventDelegate dispatchChangeText:self.text];
     // Defer size measurement to the next run loop iteration.
@@ -484,16 +464,15 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 
 - (void)dispatchChangeText:(NSString *)text {
     if (!_eventEmitter) return;
-    // U+FFFC (Object Replacement Character) is inserted by NSTextAttachment /
-    // NSAdaptiveImageGlyph (Genmoji, iOS 18+). The image data lives only in the
-    // native NSAttributedString and cannot cross the JS bridge as plain text, so
-    // replace each occurrence with "[obj]" as a visible placeholder.
-    // TODO: properly extract NSAdaptiveImageGlyph as an image and send via onRichContent.
-    NSString *plainText = [text stringByReplacingOccurrencesOfString:@"\uFFFC"
-                                                          withString:@"[?]"];
+    // TODO: Genmoji (NSAdaptiveImageGlyph, iOS 18+) and other NSTextAttachment objects
+    // are represented as U+FFFC in the plain text string and cannot cross the JS bridge
+    // as meaningful content. Proper fix: enumerate NSAttachmentAttributeName /
+    // NSAdaptiveImageGlyphAttributeName in the NSAttributedString, extract the image
+    // data, write to a temp file, and dispatch via onRichContent instead.
+    // For now, empty-message prevention is handled on the JS side.
     auto emitter = std::static_pointer_cast<RichChatInputViewEventEmitter const>(_eventEmitter);
     emitter->onChangeText(RichChatInputViewEventEmitter::OnChangeText{
-        .text = std::string(plainText.UTF8String ?: "")
+        .text = std::string(text.UTF8String ?: "")
     });
 }
 
