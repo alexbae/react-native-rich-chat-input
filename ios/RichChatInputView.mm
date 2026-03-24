@@ -44,7 +44,7 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
         // bounces the call back to KCTextInputCompositeDelegate → infinite recursion → crash.
         // Instead, constraints (maxLength, multiline) are enforced via -insertText: override.
         self.backgroundColor = [UIColor clearColor];
-        self.scrollEnabled = YES;
+        self.scrollEnabled = NO; // Enabled dynamically by RichChatInputView when content overflows
         // textContainerInset is set dynamically by RichChatInputView.updateLayoutMetrics
         // to mirror the padding values from the React style.
         self.textContainerInset = UIEdgeInsetsZero;
@@ -327,6 +327,7 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 @implementation RichChatInputView {
     RichChatInputInternalTextView *_textView;
     RichChatInputMeasuringShadowNode::ConcreteState::Shared _state;
+    CGFloat _lastContentHeight;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider {
@@ -337,6 +338,7 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     if (self = [super initWithFrame:frame]) {
         static const auto defaultProps = std::make_shared<const RichChatInputViewProps>();
         _props = defaultProps;
+        _lastContentHeight = 0;
 
         _textView = [[RichChatInputInternalTextView alloc] initWithFrame:self.bounds];
         _textView.eventDelegate = self;
@@ -373,6 +375,16 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     // Fabric layout passes that would disconnect the RTI session.
     if (frameChanged && isFirstResponder && !layoutHeightChanged) {
         _textView.frame = frameBefore;
+    }
+
+    // Enable scrolling only when content height exceeds the (possibly capped) view height.
+    // This prevents the bounce effect and scrollbar from appearing when the input is short.
+    CGFloat viewHeight = _textView.bounds.size.height;
+    if (viewHeight > 0) {
+        BOOL shouldScroll = _lastContentHeight > viewHeight + 0.5;
+        if (_textView.scrollEnabled != shouldScroll) {
+            _textView.scrollEnabled = shouldScroll;
+        }
     }
 }
 
@@ -468,6 +480,8 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 }
 
 - (void)dispatchInputSizeChange:(CGSize)size {
+    _lastContentHeight = size.height;
+
     // Update Fabric shadow node state directly — this triggers a native layout
     // pass (Yoga calls measureContent) without any JS round-trip, so the input
     // height grows in the same frame as the cursor movement.
