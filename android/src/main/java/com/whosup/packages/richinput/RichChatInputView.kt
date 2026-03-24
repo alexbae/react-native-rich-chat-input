@@ -10,6 +10,7 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.View.MeasureSpec
 import androidx.appcompat.widget.AppCompatEditText
 import androidx.core.view.OnReceiveContentListener
 import androidx.core.view.ViewCompat
@@ -267,6 +268,24 @@ class RichChatInputView @JvmOverloads constructor(
         val surfaceId = UIManagerHelper.getSurfaceId(this)
         val eventDispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactContext, id)
         eventDispatcher?.dispatchEvent(NativeEvent(surfaceId, id, eventName, params))
+    }
+
+    /**
+     * Guard against negative or zero width specs that Fabric can pass during initial layout.
+     * AppCompatEditText trying to measure hint text with a negative width causes
+     * android.text.Layout: -N < 0 crash in Fabric's TextLayoutManager.
+     */
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val wSize = MeasureSpec.getSize(widthMeasureSpec)
+        val safeWidthSpec = if (wSize < 0) {
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        } else {
+            widthMeasureSpec
+        }
+        super.onMeasure(safeWidthSpec, heightMeasureSpec)
+        // Ensure we never report 0 dimensions to Fabric — a zero-size view
+        // can cause Yoga to allocate negative space to sibling Text nodes.
+        setMeasuredDimension(maxOf(measuredWidth, 1), maxOf(measuredHeight, 1))
     }
 
     override fun onDetachedFromWindow() {
