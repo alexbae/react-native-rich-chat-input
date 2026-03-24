@@ -464,16 +464,15 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 
 - (void)dispatchChangeText:(NSString *)text {
     if (!_eventEmitter) return;
-    // U+FFFC (Object Replacement Character) is inserted by NSTextAttachment /
-    // NSAdaptiveImageGlyph (Genmoji, iOS 18+). The image data lives only in the
-    // native NSAttributedString and cannot cross the JS bridge as plain text, so
-    // replace each occurrence with "[obj]" as a visible placeholder.
-    // TODO: properly extract NSAdaptiveImageGlyph as an image and send via onRichContent.
-    NSString *plainText = [text stringByReplacingOccurrencesOfString:@"\uFFFC"
-                                                          withString:@"[obj]"];
+    // TODO: Genmoji (NSAdaptiveImageGlyph, iOS 18+) and other NSTextAttachment objects
+    // are represented as U+FFFC in the plain text string and cannot cross the JS bridge
+    // as meaningful content. Proper fix: enumerate NSAttachmentAttributeName /
+    // NSAdaptiveImageGlyphAttributeName in the NSAttributedString, extract the image
+    // data, write to a temp file, and dispatch via onRichContent instead.
+    // For now, empty-message prevention is handled on the JS side.
     auto emitter = std::static_pointer_cast<RichChatInputViewEventEmitter const>(_eventEmitter);
     emitter->onChangeText(RichChatInputViewEventEmitter::OnChangeText{
-        .text = std::string(plainText.UTF8String ?: "")
+        .text = std::string(text.UTF8String ?: "")
     });
 }
 
