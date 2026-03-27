@@ -1,5 +1,8 @@
+import React, { forwardRef, useImperativeHandle, useRef } from 'react';
 import type { NativeSyntheticEvent, StyleProp, ViewStyle } from 'react-native';
-import NativeRichChatInputView from './RichChatInputViewNativeComponent';
+import NativeRichChatInputView, {
+  Commands,
+} from './RichChatInputViewNativeComponent';
 
 export interface RichContentResult {
   uri: string;
@@ -24,30 +27,48 @@ export interface RichChatInputProps {
   onInputSizeChange?: (size: ContentSizeResult) => void;
 }
 
-export function RichChatInput(props: RichChatInputProps) {
-  const { onChangeText, onRichContent, onInputSizeChange, ...rest } = props;
-
-  return (
-    <NativeRichChatInputView
-      {...rest}
-      onChangeText={
-        onChangeText
-          ? (e: NativeSyntheticEvent<{ text: string }>) =>
-              onChangeText(e.nativeEvent.text)
-          : undefined
-      }
-      onRichContent={
-        onRichContent
-          ? (e: NativeSyntheticEvent<RichContentResult>) =>
-              onRichContent(e.nativeEvent)
-          : undefined
-      }
-      onInputSizeChange={
-        onInputSizeChange
-          ? (e: NativeSyntheticEvent<ContentSizeResult>) =>
-              onInputSizeChange(e.nativeEvent)
-          : undefined
-      }
-    />
-  );
+export interface RichChatInputRef {
+  clear: () => void;
 }
+
+export const RichChatInput = forwardRef<RichChatInputRef, RichChatInputProps>(
+  (props, ref) => {
+    const nativeRef =
+      useRef<React.ElementRef<typeof NativeRichChatInputView>>(null);
+
+    useImperativeHandle(ref, () => ({
+      clear: () => {
+        if (nativeRef.current) {
+          Commands.clear(nativeRef.current);
+        }
+      },
+    }));
+
+    const { onChangeText, onRichContent, onInputSizeChange, ...rest } = props;
+
+    return (
+      <NativeRichChatInputView
+        ref={nativeRef}
+        {...rest}
+        onChangeText={
+          onChangeText
+            ? (e: NativeSyntheticEvent<{ text: string }>) =>
+                onChangeText(e.nativeEvent.text)
+            : undefined
+        }
+        onRichContent={
+          onRichContent
+            ? (e: NativeSyntheticEvent<RichContentResult>) =>
+                onRichContent(e.nativeEvent)
+            : undefined
+        }
+        onInputSizeChange={
+          onInputSizeChange
+            ? (e: NativeSyntheticEvent<ContentSizeResult>) =>
+                onInputSizeChange(e.nativeEvent)
+            : undefined
+        }
+      />
+    );
+  }
+);

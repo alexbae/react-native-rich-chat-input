@@ -324,6 +324,9 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 #pragma mark - RichChatInputView (Fabric wrapper)
 // ---------------------------------------------------------------------------
 
+@interface RichChatInputView () <RCTRichChatInputViewViewProtocol>
+@end
+
 @implementation RichChatInputView {
     RichChatInputInternalTextView *_textView;
     RichChatInputMeasuringShadowNode::ConcreteState::Shared _state;
@@ -458,6 +461,17 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     _textView.text = @"";
     [_textView updatePlaceholderVisibility];
     _state = nullptr;
+}
+
+#pragma mark - Commands
+
+- (void)handleCommand:(const NSString *)commandName args:(const NSArray *)args {
+    RCTRichChatInputViewHandleCommand(self, commandName, args);
+}
+
+- (void)clear {
+    _textView.text = @"";
+    [_textView updatePlaceholderVisibility];
 }
 
 #pragma mark - Event dispatch (called from RichChatInputInternalTextView)

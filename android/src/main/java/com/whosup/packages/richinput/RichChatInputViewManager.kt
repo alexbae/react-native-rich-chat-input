@@ -64,6 +64,10 @@ class RichChatInputViewManager : SimpleViewManager<RichChatInputView>(),
     view?.updateAcceptedMimeTypes(value)
   }
 
+  override fun clear(view: RichChatInputView?) {
+    view?.setText("")
+  }
+
   override fun getExportedCustomBubblingEventTypeConstants(): MutableMap<String, Any> {
     return mutableMapOf(
       "topRichContent" to
