@@ -1,5 +1,6 @@
-import { codegenNativeComponent } from 'react-native';
-import type { ColorValue, ViewProps } from 'react-native';
+import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
+import codegenNativeCommands from 'react-native/Libraries/Utilities/codegenNativeCommands';
+import type { HostComponent, ColorValue, ViewProps } from 'react-native';
 import type {
   BubblingEventHandler,
   Float,
@@ -32,4 +33,16 @@ interface NativeProps extends ViewProps {
   onInputSizeChange?: BubblingEventHandler<ContentSizeChangeEvent>;
 }
 
-export default codegenNativeComponent<NativeProps>('RichChatInputView');
+type ComponentType = HostComponent<NativeProps>;
+
+interface NativeCommands {
+  clear: (viewRef: React.ElementRef<ComponentType>) => void;
+}
+
+export const Commands: NativeCommands = codegenNativeCommands<NativeCommands>({
+  supportedCommands: ['clear'],
+});
+
+export default codegenNativeComponent<NativeProps>(
+  'RichChatInputView'
+) as ComponentType;
