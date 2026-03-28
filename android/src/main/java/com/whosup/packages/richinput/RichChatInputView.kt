@@ -106,7 +106,7 @@ class RichChatInputView @JvmOverloads constructor(
                 if (uriContent != null) {
                     val clip = uriContent.clip
                     for (i in 0 until clip.itemCount) {
-                        clip.getItemAt(i).uri?.let { copyAndDispatchContent(it) }
+                        clip.getItemAt(i).uri?.let { readAndDispatchContent(it) }
                     }
                 }
 
@@ -115,68 +115,63 @@ class RichChatInputView @JvmOverloads constructor(
         )
     }
 
-    private fun copyAndDispatchContent(contentUri: Uri) {
-        coroutineScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                copyToCache(contentUri)
+    /**
+     * Synchronously reads the content URI bytes while the temporary permission
+     * granted by OnReceiveContentListener is still valid, then writes to cache
+     * on a background thread.
+     */
+    private fun readAndDispatchContent(contentUri: Uri) {
+        val contentResolver = context.contentResolver
+
+        val mimeType = contentResolver.getType(contentUri)
+        if (mimeType == null) {
+            Log.e(TAG, "Cannot resolve MIME type for URI: $contentUri")
+            return
+        }
+
+        val bytes: ByteArray
+        try {
+            val inputStream = contentResolver.openInputStream(contentUri)
+            if (inputStream == null) {
+                Log.e(TAG, "openInputStream returned null for URI: $contentUri")
+                return
             }
-            if (result != null) {
-                dispatchRichContentEvent(result.first, result.second)
+            bytes = inputStream.use { it.readBytes() }
+        } catch (e: java.io.FileNotFoundException) {
+            Log.e(TAG, "Content URI not found: $contentUri", e)
+            return
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Permission denied for URI: $contentUri", e)
+            return
+        } catch (e: java.io.IOException) {
+            Log.e(TAG, "I/O error reading content URI: $contentUri", e)
+            return
+        }
+
+        if (bytes.size > MAX_FILE_SIZE_BYTES) {
+            Log.w(TAG, "Content exceeds ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit, ignoring")
+            return
+        }
+
+        coroutineScope.launch {
+            val fileUri = withContext(Dispatchers.IO) {
+                writeBytesToCache(bytes, mimeType)
+            }
+            if (fileUri != null) {
+                dispatchRichContentEvent(fileUri, mimeType)
             }
         }
     }
 
-    private fun copyToCache(contentUri: Uri): Pair<String, String>? {
+    private fun writeBytesToCache(bytes: ByteArray, mimeType: String): String? {
         return try {
-            val contentResolver = context.contentResolver
-            val mimeType = contentResolver.getType(contentUri)
-            if (mimeType == null) {
-                Log.e(TAG, "Cannot resolve MIME type for URI: $contentUri")
-                return null
-            }
             val extension = mimeTypeToExtension(mimeType)
             val fileName = "rich_content_${UUID.randomUUID()}.$extension"
             val cacheFile = File(context.cacheDir, fileName)
-
-            val inputStream = try {
-                contentResolver.openInputStream(contentUri)
-            } catch (e: java.io.FileNotFoundException) {
-                Log.e(TAG, "Content URI not found (expired?): $contentUri", e)
-                return null
-            } catch (e: SecurityException) {
-                Log.e(TAG, "Permission denied for URI: $contentUri", e)
-                return null
-            }
-
-            if (inputStream == null) {
-                Log.e(TAG, "openInputStream returned null for URI: $contentUri")
-                return null
-            }
-
-            inputStream.use { input ->
-                var totalBytes = 0L
-                FileOutputStream(cacheFile).use { output ->
-                    val buffer = ByteArray(8 * 1024)
-                    var read: Int
-                    while (input.read(buffer).also { read = it } != -1) {
-                        totalBytes += read
-                        if (totalBytes > MAX_FILE_SIZE_BYTES) {
-                            Log.w(TAG, "File exceeds ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit, aborting copy")
-                            output.flush()
-                            cacheFile.delete()
-                            return null
-                        }
-                        output.write(buffer, 0, read)
-                    }
-                }
-            }
-
-            Pair(Uri.fromFile(cacheFile).toString(), mimeType)
+            FileOutputStream(cacheFile).use { it.write(bytes) }
+            Uri.fromFile(cacheFile).toString()
         } catch (e: java.io.IOException) {
-            Log.e(TAG, "I/O error copying content to cache", e)
-            null
-        } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error copying content to cache", e)
+            Log.e(TAG, "Failed to write content to cache", e)
             null
         }
     }
