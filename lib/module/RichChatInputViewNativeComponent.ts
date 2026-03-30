@@ -27,6 +27,7 @@ interface NativeProps extends ViewProps {
   editable?: boolean;
   multiline?: boolean;
   maxLength?: Int32;
+  fontSize?: Float;
   acceptedMimeTypes?: string[];
   onChangeText?: BubblingEventHandler<ChangeTextEvent>;
   onRichContent?: BubblingEventHandler<RichContentEvent>;

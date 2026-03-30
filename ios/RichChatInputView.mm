@@ -104,6 +104,12 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     _placeholderLabel.hidden = (self.text.length > 0);
 }
 
+- (void)updateFontSize:(CGFloat)size {
+    UIFont *newFont = [UIFont systemFontOfSize:size];
+    self.font = newFont;
+    _placeholderLabel.font = newFont;
+}
+
 - (void)_textStorageDidChange:(NSNotification *)note {
     NSTextStorage *storage = note.object;
     // Only react to character edits (not attribute-only changes like spell-check highlights)
@@ -438,6 +444,12 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
         _textView.maxLength = newViewProps.maxLength;
     }
 
+    // fontSize
+    if (oldViewProps.fontSize != newViewProps.fontSize) {
+        CGFloat size = newViewProps.fontSize > 0 ? newViewProps.fontSize : 17.0;
+        [_textView updateFontSize:size];
+    }
+
     // acceptedMimeTypes: std::vector<std::string> → NSArray<NSString *>
     if (oldViewProps.acceptedMimeTypes != newViewProps.acceptedMimeTypes) {
         NSMutableArray<NSString *> *types = [NSMutableArray array];
@@ -470,7 +482,17 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 }
 
 - (void)clear {
-    _textView.text = @"";
+    // Use UITextInput protocol methods so the iOS RTI (Remote Text Input) session
+    // is properly notified. Direct `.text = @""` bypasses the keyboard daemon,
+    // which then pushes stale text back via onChangeText after the clear.
+    UITextPosition *beginning = _textView.beginningOfDocument;
+    UITextPosition *end = _textView.endOfDocument;
+    if (beginning && end) {
+        UITextRange *allRange = [_textView textRangeFromPosition:beginning toPosition:end];
+        if (allRange) {
+            [_textView replaceRange:allRange withText:@""];
+        }
+    }
     [_textView updatePlaceholderVisibility];
 }
 

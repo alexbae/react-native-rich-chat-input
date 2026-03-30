@@ -59,6 +59,11 @@ class RichChatInputViewManager : SimpleViewManager<RichChatInputView>(),
     view?.updateMaxLength(value)
   }
 
+  @ReactProp(name = "fontSize", defaultFloat = 0f)
+  override fun setFontSize(view: RichChatInputView?, value: Float) {
+    view?.updateFontSize(value)
+  }
+
   @ReactProp(name = "acceptedMimeTypes")
   override fun setAcceptedMimeTypes(view: RichChatInputView?, value: ReadableArray?) {
     view?.updateAcceptedMimeTypes(value)

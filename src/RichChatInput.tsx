@@ -20,6 +20,7 @@ export interface RichChatInputProps {
   editable?: boolean;
   multiline?: boolean;
   maxLength?: number;
+  fontSize?: number;
   acceptedMimeTypes?: string[];
   style?: StyleProp<ViewStyle>;
   onChangeText?: (text: string) => void;

@@ -94,6 +94,11 @@ class RichChatInputView @JvmOverloads constructor(
         }
     }
 
+    fun updateFontSize(size: Float) {
+        val sp = if (size > 0f) size else 17f
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
+    }
+
     private fun registerReceiveContentListener() {
         ViewCompat.setOnReceiveContentListener(
             this,
