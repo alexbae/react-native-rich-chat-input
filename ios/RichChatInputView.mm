@@ -482,6 +482,14 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 }
 
 - (void)clear {
+    // End any in-progress IME composition (Korean/Chinese/Japanese marked text)
+    // BEFORE replacing the range. Otherwise the keyboard daemon (RTI) still holds
+    // the marked text reference and asynchronously flushes it back via
+    // onChangeText after the clear, leaving the last composing character
+    // (e.g. "요" of "안녕하세요") stuck in the input.
+    if (_textView.markedTextRange) {
+        [_textView unmarkText];
+    }
     // Use UITextInput protocol methods so the iOS RTI (Remote Text Input) session
     // is properly notified. Direct `.text = @""` bypasses the keyboard daemon,
     // which then pushes stale text back via onChangeText after the clear.
