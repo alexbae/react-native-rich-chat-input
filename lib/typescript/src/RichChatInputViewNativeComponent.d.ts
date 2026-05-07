@@ -1,4 +1,4 @@
-import type { ColorValue, ViewProps } from 'react-native';
+import type { HostComponent, ColorValue, ViewProps } from 'react-native';
 import type { BubblingEventHandler, Float, Int32 } from 'react-native/Libraries/Types/CodegenTypes';
 type RichContentEvent = Readonly<{
     uri: string;
@@ -22,6 +22,11 @@ interface NativeProps extends ViewProps {
     onRichContent?: BubblingEventHandler<RichContentEvent>;
     onInputSizeChange?: BubblingEventHandler<ContentSizeChangeEvent>;
 }
-declare const _default: import("react-native/types_generated/Libraries/Utilities/codegenNativeComponent").NativeComponentType<NativeProps>;
+type ComponentType = HostComponent<NativeProps>;
+interface NativeCommands {
+    clear: (viewRef: React.ElementRef<ComponentType>) => void;
+}
+export declare const Commands: NativeCommands;
+declare const _default: ComponentType;
 export default _default;
 //# sourceMappingURL=RichChatInputViewNativeComponent.d.ts.map

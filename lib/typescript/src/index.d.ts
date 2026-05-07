@@ -1,4 +1,4 @@
 export { RichChatInput } from './RichChatInput';
-export type { RichChatInputProps, RichContentResult, ContentSizeResult } from './RichChatInput';
+export type { RichChatInputProps, RichContentResult, ContentSizeResult, RichChatInputRef } from './RichChatInput';
 export { default as RichChatInputView } from './RichChatInputViewNativeComponent';
 //# sourceMappingURL=index.d.ts.map

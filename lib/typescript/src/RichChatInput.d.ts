@@ -1,3 +1,4 @@
+import React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 export interface RichContentResult {
     uri: string;
@@ -19,5 +20,8 @@ export interface RichChatInputProps {
     onRichContent?: (content: RichContentResult) => void;
     onInputSizeChange?: (size: ContentSizeResult) => void;
 }
-export declare function RichChatInput(props: RichChatInputProps): import("react/jsx-runtime").JSX.Element;
+export interface RichChatInputRef {
+    clear: () => void;
+}
+export declare const RichChatInput: React.ForwardRefExoticComponent<RichChatInputProps & React.RefAttributes<RichChatInputRef>>;
 //# sourceMappingURL=RichChatInput.d.ts.map
