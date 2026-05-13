@@ -72,6 +72,8 @@ config.resolver.unstable_conditionsByPlatform = {
 
 With this setup, `yarn prepare` (the `lib/` build) is only needed when **publishing to npm**, not during local development.
 
+> **Installing this package into another app (e.g. via a git URL on the `develop` branch)?** See [host-setup.md](./host-setup.md) for the complete consumer-side checklist — Metro resolver, Codegen, TypeScript path mapping, refreshing the git ref, and common host-side mistakes.
+
 ## `yarn prepare` is intentionally a no-op
 
 The `prepare` script in `package.json` is an empty string. This avoids a known incompatibility between `react-native-builder-bob@0.40.18` and ESM-only `arktype@2.x`. See [troubleshooting.md](./troubleshooting.md#yarn-prepare-fails-with-err_require_esm) for the workaround when an actual `lib/` build is needed.
