@@ -107,12 +107,28 @@ export const RichChatInput = forwardRef<RichChatInputRef, RichChatInputProps>(
 
     useImperativeHandle(ref, () => ({
       clear: () => {
+        // [RCI debug-logging]
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[RCI:js t=${Date.now() % 100000}] clear() called latestText="${latestTextRef.current}" hasNativeRef=${!!nativeRef.current}`
+          );
+        }
         latestTextRef.current = '';
         if (nativeRef.current) {
           Commands.clear(nativeRef.current);
         }
       },
-      getText: () => latestTextRef.current,
+      getText: () => {
+        // [RCI debug-logging]
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[RCI:js t=${Date.now() % 100000}] getText() -> "${latestTextRef.current}"`
+          );
+        }
+        return latestTextRef.current;
+      },
     }));
 
     const { onChangeText, onRichContent, onInputSizeChange, onError, ...rest } =
@@ -126,6 +142,13 @@ export const RichChatInput = forwardRef<RichChatInputRef, RichChatInputProps>(
         // the host does not subscribe to the prop. The native dispatch fires
         // unconditionally either way, so there's no perf cost.
         onChangeText={(e: NativeSyntheticEvent<{ text: string }>) => {
+          // [RCI debug-logging]
+          if (__DEV__) {
+            // eslint-disable-next-line no-console
+            console.log(
+              `[RCI:js t=${Date.now() % 100000}] onChangeText from native -> "${e.nativeEvent.text}" (len=${e.nativeEvent.text.length})`
+            );
+          }
           latestTextRef.current = e.nativeEvent.text;
           onChangeText?.(e.nativeEvent.text);
         }}

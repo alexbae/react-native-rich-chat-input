@@ -15,6 +15,36 @@ static const NSUInteger kRichContentMaxFileSize = 20 * 1024 * 1024; // 20 MB
 static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 (초)
 
 // ---------------------------------------------------------------------------
+// [RCI debug-logging] Temporary diagnostic logging to trace the iOS Korean IME
+// post-send residue bug. Set to NO to silence. Filter Xcode console with "[RCI]".
+// ---------------------------------------------------------------------------
+static const BOOL kRCIDebugLoggingEnabled = YES;
+
+static CFAbsoluteTime _rciStartTime = 0;
+static inline double RCIElapsedMs(void) {
+    if (_rciStartTime == 0) _rciStartTime = CFAbsoluteTimeGetCurrent();
+    return (CFAbsoluteTimeGetCurrent() - _rciStartTime) * 1000.0;
+}
+
+static inline NSString *RCISnippet(NSString *s) {
+    if (!s) return @"<nil>";
+    NSUInteger len = s.length;
+    NSString *body = len > 40 ? [s substringToIndex:40] : s;
+    return [NSString stringWithFormat:@"len=%lu \"%@\"%@",
+        (unsigned long)len, body, len > 40 ? @"…" : @""];
+}
+
+static inline NSString *RCIRangeDesc(UITextView *tv, UITextRange *r) {
+    if (!r) return @"<nil>";
+    NSInteger start = [tv offsetFromPosition:tv.beginningOfDocument toPosition:r.start];
+    NSInteger end = [tv offsetFromPosition:tv.beginningOfDocument toPosition:r.end];
+    return [NSString stringWithFormat:@"[%ld..%ld]", (long)start, (long)end];
+}
+
+#define RCILog(fmt, ...) \
+    do { if (kRCIDebugLoggingEnabled) NSLog(@"[RCI t+%.1fms] " fmt, RCIElapsedMs(), ##__VA_ARGS__); } while(0)
+
+// ---------------------------------------------------------------------------
 #pragma mark - RichChatInputInternalTextView
 // ---------------------------------------------------------------------------
 
@@ -114,6 +144,11 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     NSTextStorage *storage = note.object;
     // Only react to character edits (not attribute-only changes like spell-check highlights)
     if (!(storage.editedMask & NSTextStorageEditedCharacters)) return;
+    RCILog(@"textStorageDidChange editedRange=%@ changeInLength=%ld text=%@ marked=%@ selected=%@",
+        NSStringFromRange(storage.editedRange), (long)storage.changeInLength,
+        RCISnippet(self.text),
+        RCIRangeDesc(self, self.markedTextRange),
+        RCIRangeDesc(self, self.selectedTextRange));
     [self updatePlaceholderVisibility];
     [self.eventDelegate dispatchChangeText:self.text];
     // Defer size measurement to the next run loop iteration.
@@ -141,9 +176,15 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 // approach, which required self.delegate = self — the source of the
 // KCTextInputCompositeDelegate infinite-recursion crash.
 - (void)insertText:(NSString *)text {
+    RCILog(@"insertText IN incoming=\"%@\" current=%@ marked=%@ selected=%@",
+        text, RCISnippet(self.text),
+        RCIRangeDesc(self, self.markedTextRange),
+        RCIRangeDesc(self, self.selectedTextRange));
+
     // single-line: block newlines
     if (!self.multiline) {
         if ([text rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]].location != NSNotFound) {
+            RCILog(@"insertText REJECTED newline in single-line mode");
             return;
         }
     }
@@ -157,12 +198,33 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
         if (newLen > (NSUInteger)self.maxLength) {
             // Insert only as many characters as the budget allows
             NSUInteger budget = (NSUInteger)self.maxLength - (currentLen - replaceLen);
-            if (budget == 0) return;
+            if (budget == 0) { RCILog(@"insertText REJECTED maxLength budget=0"); return; }
             text = [text substringToIndex:MIN(budget, text.length)];
+            RCILog(@"insertText TRUNCATED to \"%@\" budget=%lu", text, (unsigned long)budget);
         }
     }
 
     [super insertText:text];
+    RCILog(@"insertText OUT after-super=%@", RCISnippet(self.text));
+}
+
+// Track Korean/CJK composition state changes. setMarkedText: is the UITextInput
+// hook the keyboard daemon (RTI) uses for each composing-syllable update.
+- (void)setMarkedText:(NSString *)markedText selectedRange:(NSRange)selectedRange {
+    RCILog(@"setMarkedText markedText=\"%@\" selectedRange=%@ before-text=%@ before-marked=%@",
+        markedText, NSStringFromRange(selectedRange),
+        RCISnippet(self.text), RCIRangeDesc(self, self.markedTextRange));
+    [super setMarkedText:markedText selectedRange:selectedRange];
+    RCILog(@"setMarkedText OUT after-text=%@ after-marked=%@",
+        RCISnippet(self.text), RCIRangeDesc(self, self.markedTextRange));
+}
+
+- (void)unmarkText {
+    RCILog(@"unmarkText before-text=%@ before-marked=%@",
+        RCISnippet(self.text), RCIRangeDesc(self, self.markedTextRange));
+    [super unmarkText];
+    RCILog(@"unmarkText OUT after-text=%@ after-marked=%@",
+        RCISnippet(self.text), RCIRangeDesc(self, self.markedTextRange));
 }
 
 #pragma mark - Paste interception
@@ -530,14 +592,22 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
  *  inherit stale composition state from the previous mount.
  */
 - (void)_clearTextReportingTelemetry:(BOOL)reportTelemetry {
+    RCILog(@"clear() ENTER text=%@ marked=%@ selected=%@ isFirstResponder=%d reportTelemetry=%d",
+        RCISnippet(_textView.text),
+        RCIRangeDesc(_textView, _textView.markedTextRange),
+        RCIRangeDesc(_textView, _textView.selectedTextRange),
+        _textView.isFirstResponder, reportTelemetry);
+
     UITextRange *markedRange = _textView.markedTextRange;
     BOOL hadMarkedText = (markedRange != nil);
     if (markedRange != nil) {
+        RCILog(@"clear() step1: replaceRange(markedRange=%@, @\"\")", RCIRangeDesc(_textView, markedRange));
         [_textView replaceRange:markedRange withText:@""];
-        // Defensive: on some iOS releases an empty same-range replacement leaves
-        // markedTextRange non-nil with zero length. Force it to nil so the next
-        // keystroke starts a fresh composition.
+        RCILog(@"clear() step1 OUT text=%@ marked=%@",
+            RCISnippet(_textView.text),
+            RCIRangeDesc(_textView, _textView.markedTextRange));
         if (_textView.markedTextRange != nil) {
+            RCILog(@"clear() step1 marked STILL non-nil, falling back to unmarkText");
             if (reportTelemetry) {
                 [self dispatchError:@"IME_MARKED_TEXT_PERSISTED"
                             message:@"replaceRange(markedTextRange, @\"\") did not clear the IME marked range; falling back to -unmarkText"
@@ -547,29 +617,52 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
             }
             [_textView unmarkText];
         }
+    } else {
+        RCILog(@"clear() step1 SKIPPED — no marked range");
     }
     UITextPosition *beginning = _textView.beginningOfDocument;
     UITextPosition *end = _textView.endOfDocument;
     if (beginning && end) {
         UITextRange *allRange = [_textView textRangeFromPosition:beginning toPosition:end];
         if (allRange) {
+            RCILog(@"clear() step2: replaceRange(allRange=%@, @\"\")", RCIRangeDesc(_textView, allRange));
             [_textView replaceRange:allRange withText:@""];
+            RCILog(@"clear() step2 OUT text=%@", RCISnippet(_textView.text));
         }
     }
     [_textView updatePlaceholderVisibility];
+    RCILog(@"clear() EXIT text=%@ marked=%@ selected=%@",
+        RCISnippet(_textView.text),
+        RCIRangeDesc(_textView, _textView.markedTextRange),
+        RCIRangeDesc(_textView, _textView.selectedTextRange));
 
-    // RTI flushes any in-flight composition events on the next run-loop tick.
-    // If the input ends up non-empty shortly after the synchronous clear, the
-    // keyboard daemon flushed a stale syllable back (the Korean "요" stuck
-    // bug). Surface this so the host app can see the bug occurring in
-    // production via its error tracker.
+    // [RCI debug-logging] Multi-tick watchdog — sample text state at several
+    // points after clear so we can see WHEN (if ever) text reappears.
+    NSArray<NSNumber *> *delays = @[@0.016, @0.05, @0.10, @0.20, @0.50, @1.00];
+    __weak RichChatInputInternalTextView *weakTextView = _textView;
+    for (NSNumber *delayNum in delays) {
+        NSTimeInterval delay = delayNum.doubleValue;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            __strong RichChatInputInternalTextView *strongTextView = weakTextView;
+            if (!strongTextView) return;
+            RCILog(@"clear() WATCHDOG +%.0fms text=%@ marked=%@ selected=%@",
+                delay * 1000,
+                RCISnippet(strongTextView.text),
+                RCIRangeDesc(strongTextView, strongTextView.markedTextRange),
+                RCIRangeDesc(strongTextView, strongTextView.selectedTextRange));
+        });
+    }
+
+    // Production telemetry path (unchanged behavior — only fires onError if
+    // text reappears at +100ms AND we cleared after a marked-text composition).
     if (hadMarkedText && reportTelemetry) {
         __weak RichChatInputView *weakSelf = self;
-        __weak RichChatInputInternalTextView *weakTextView = _textView;
+        __weak RichChatInputInternalTextView *weakTextView2 = _textView;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             __strong RichChatInputView *strongSelf = weakSelf;
-            __strong RichChatInputInternalTextView *strongTextView = weakTextView;
+            __strong RichChatInputInternalTextView *strongTextView = weakTextView2;
             if (!strongSelf || !strongTextView) return;
             if (strongTextView.text.length > 0) {
                 NSString *flushed = strongTextView.text.length > 32
@@ -591,6 +684,8 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 #pragma mark - Event dispatch (called from RichChatInputInternalTextView)
 
 - (void)dispatchChangeText:(NSString *)text {
+    RCILog(@"dispatchChangeText -> JS text=%@ hasEmitter=%d",
+        RCISnippet(text), _eventEmitter != nullptr);
     if (!_eventEmitter) return;
     // TODO: Genmoji (NSAdaptiveImageGlyph, iOS 18+) and other NSTextAttachment objects
     // are represented as U+FFFC in the plain text string and cannot cross the JS bridge
