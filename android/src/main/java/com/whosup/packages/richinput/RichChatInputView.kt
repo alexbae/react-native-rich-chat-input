@@ -10,6 +10,7 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
@@ -145,6 +146,50 @@ class RichChatInputView @JvmOverloads constructor(
         val ic = super.onCreateInputConnection(outAttrs) ?: return null
         EditorInfoCompat.setContentMimeTypes(outAttrs, currentMimeTypes)
         return InputConnectionCompat.createWrapper(this, ic, outAttrs)
+    }
+
+    /**
+     * Clears the input in a way that also resets the IME's composition state.
+     *
+     * Why this is more than `editableText.clear()`:
+     *   - Android IMEs mark the in-progress composition by attaching
+     *     Spannable.SPAN_COMPOSING flags onto the Editable. `editable.clear()`
+     *     drops the characters but leaves the spans dangling at indices that
+     *     no longer exist. The IME then keeps treating subsequent keystrokes
+     *     as a continuation of the stale composition — characters get merged
+     *     into / absorbed by the phantom composing region, producing the
+     *     "incomplete first send / merged next send" bug that persists across
+     *     every send until the app is restarted (because the EditText
+     *     instance — and its corrupted span state — survives focus toggles).
+     *   - InputMethodManager.restartInput tells the keyboard daemon to drop
+     *     the InputConnection and recreate it, which also discards any
+     *     pending composition events in flight from the IME process. Samsung
+     *     keyboard's swipe / predict modes in particular won't recover
+     *     without this.
+     */
+    fun clearTextSafely() {
+        val editable = editableText ?: return
+        BaseInputConnection.removeComposingSpans(editable)
+        editable.clear()
+        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+            ?.restartInput(this)
+
+        // If the IME still re-injects characters on the next loop tick, the
+        // bug above is firing — surface it via onError so production
+        // occurrences are observable in Sentry. Uses the same code as the
+        // iOS counterpart so the issue groups cross-platform.
+        post {
+            val current = editableText?.toString().orEmpty()
+            if (current.isNotEmpty()) {
+                val sample = if (current.length > 32) current.substring(0, 32) else current
+                dispatchErrorEvent(
+                    code = "IME_STALE_TEXT_FLUSHED",
+                    message = "IME re-injected ${current.length} char(s) after clear() — " +
+                        "subsequent sends may include leftover composing text " +
+                        "(sample: \"$sample\")",
+                )
+            }
+        }
     }
 
     /**

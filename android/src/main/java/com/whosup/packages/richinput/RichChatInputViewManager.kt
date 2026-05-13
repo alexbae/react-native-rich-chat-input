@@ -70,7 +70,7 @@ class RichChatInputViewManager : SimpleViewManager<RichChatInputView>(),
   }
 
   override fun clear(view: RichChatInputView?) {
-    view?.editableText?.clear()
+    view?.clearTextSafely()
   }
 
   override fun getExportedCustomBubblingEventTypeConstants(): MutableMap<String, Any> {
