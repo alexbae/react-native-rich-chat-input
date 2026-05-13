@@ -37,6 +37,7 @@ For multiline auto-grow, `clear()` after send, and forwarding errors to Sentry, 
 | Document | What it covers |
 |---|---|
 | [installation.md](./docs/installation.md) | Requirements, install steps, local development build |
+| [host-setup.md](./docs/host-setup.md) | End-to-end host app checklist: git URL vs npm install, Metro resolver, Codegen, TS paths, smoke test |
 | [usage.md](./docs/usage.md) | Quick start patterns: minimal, rich content, auto-grow, ref + `clear()`, Sentry wiring |
 | [api-reference.md](./docs/api-reference.md) | Full Props / Imperative API / Event payload / Error code reference |
 | [architecture.md](./docs/architecture.md) | Design rationale, Fabric + Codegen flow, threading model |
