@@ -41,6 +41,14 @@ interface RichChatInputRef {
    * session — required after sending to prevent stuck-character bugs.
    */
   clear: () => void;
+
+  /**
+   * Returns the most recent text the input has reported via `onChangeText`.
+   * Reads from a JS ref that mirrors the latest dispatch, bypassing React
+   * state batching — useful when a "send" button handler needs the freshest
+   * text on tap without racing the next render.
+   */
+  getText: () => string;
 }
 ```
 
@@ -48,9 +56,21 @@ Usage:
 
 ```tsx
 const ref = useRef<RichChatInputRef>(null);
-// ...
-ref.current?.clear();
+
+const handleSend = () => {
+  const text = ref.current?.getText() ?? '';
+  api.send(text);
+  ref.current?.clear();
+};
 ```
+
+### About `getText()` freshness
+
+`getText()` returns the JS-side mirror of the most recently dispatched `onChangeText` event. This:
+
+- ✅ Bypasses React's `setState` batching (so it survives the race where the host's `text` state is one render stale).
+- ✅ Returns synchronously — no `await`, no promise.
+- ⚠️ Is only as fresh as the latest `onChangeText` event that has reached JS. For "user types then taps send", the typing events arrive before the tap event, so this is fine. For "host code triggers `clear()` and immediately reads `getText()`", the mirror is reset synchronously inside `clear()` so the empty string is returned correctly.
 
 ## Event payload types
 

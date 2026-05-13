@@ -1,6 +1,7 @@
 package com.whosup.packages.richinput
 
 import android.content.Context
+import android.content.res.AssetFileDescriptor
 import android.net.Uri
 import android.text.Editable
 import android.text.InputFilter
@@ -29,8 +30,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -41,7 +44,12 @@ class RichChatInputView @JvmOverloads constructor(
     defStyleAttr: Int = android.R.attr.editTextStyle
 ) : AppCompatEditText(context, attrs, defStyleAttr) {
 
-    private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    // Re-created on every reattach (see onAttachedToWindow). Detach cancels
+    // the scope; if the view is later reattached (RN Navigation pop+push,
+    // react-native-screens stash, FlatList recycling), `coroutineScope.launch`
+    // on the cancelled scope would silently no-op — image-paste cache writes
+    // and error dispatches would be lost.
+    private var coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var currentMimeTypes: Array<String> = DEFAULT_MIME_TYPES.copyOf()
 
     init {
@@ -193,9 +201,20 @@ class RichChatInputView @JvmOverloads constructor(
     }
 
     /**
-     * Synchronously reads the content URI bytes while the temporary permission
-     * granted by OnReceiveContentListener is still valid, then writes to cache
-     * on a background thread.
+     * Reads the content URI bytes while the temporary permission granted by
+     * OnReceiveContentListener is still valid, then writes to cache on a
+     * background thread.
+     *
+     * The read itself happens on the main thread because the keyboard's
+     * temporary URI grant expires when this method returns. To minimise the
+     * UI-blocking window for oversized content, we:
+     *
+     *   1. Ask the provider for a declared size via openAssetFileDescriptor
+     *      and bail out before reading a single byte if it already exceeds
+     *      the 20 MB cap (many providers don't implement this and return
+     *      UNKNOWN_LENGTH — fine, we fall through).
+     *   2. Stream the bytes in chunks and abort as soon as the cumulative
+     *      total crosses the cap, so a 50 MB paste no longer reads 50 MB.
      */
     private fun readAndDispatchContent(contentUri: Uri) {
         val contentResolver = context.contentResolver
@@ -210,7 +229,30 @@ class RichChatInputView @JvmOverloads constructor(
             return
         }
 
+        // Pre-check size: many providers (keyboards included) expose the
+        // payload length via AssetFileDescriptor. When they do, we can reject
+        // oversized content without reading any bytes.
+        try {
+            contentResolver.openAssetFileDescriptor(contentUri, "r")?.use { afd ->
+                val declared = afd.length
+                if (declared != AssetFileDescriptor.UNKNOWN_LENGTH &&
+                    declared > MAX_FILE_SIZE_BYTES) {
+                    Log.w(TAG, "Content declared size $declared exceeds limit, ignoring")
+                    dispatchErrorEvent(
+                        code = "RICH_CONTENT_TOO_LARGE",
+                        message = "Pasted content declared size $declared bytes exceeds " +
+                            "the ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit",
+                    )
+                    return
+                }
+            }
+        } catch (_: Exception) {
+            // openAssetFileDescriptor is optional for content providers.
+            // Fall through — the streaming read below enforces the cap.
+        }
+
         val bytes: ByteArray
+        var sizeOverflowed = false
         try {
             val inputStream = contentResolver.openInputStream(contentUri)
             if (inputStream == null) {
@@ -221,7 +263,22 @@ class RichChatInputView @JvmOverloads constructor(
                 )
                 return
             }
-            bytes = inputStream.use { it.readBytes() }
+            bytes = inputStream.use { stream ->
+                val out = ByteArrayOutputStream()
+                val buf = ByteArray(STREAM_CHUNK_BYTES)
+                var total = 0L
+                var n = stream.read(buf)
+                while (n >= 0) {
+                    total += n
+                    if (total > MAX_FILE_SIZE_BYTES) {
+                        sizeOverflowed = true
+                        break
+                    }
+                    out.write(buf, 0, n)
+                    n = stream.read(buf)
+                }
+                out.toByteArray()
+            }
         } catch (e: java.io.FileNotFoundException) {
             Log.e(TAG, "Content URI not found: $contentUri", e)
             dispatchErrorEvent(
@@ -248,12 +305,12 @@ class RichChatInputView @JvmOverloads constructor(
             return
         }
 
-        if (bytes.size > MAX_FILE_SIZE_BYTES) {
-            Log.w(TAG, "Content exceeds ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit, ignoring")
+        if (sizeOverflowed) {
+            Log.w(TAG, "Content exceeded ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB cap mid-stream, aborted")
             dispatchErrorEvent(
                 code = "RICH_CONTENT_TOO_LARGE",
-                message = "Pasted content size ${bytes.size} bytes exceeds the " +
-                    "${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit",
+                message = "Pasted content exceeded the " +
+                    "${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit while streaming",
             )
             return
         }
@@ -424,6 +481,17 @@ class RichChatInputView @JvmOverloads constructor(
         eventDispatcher?.dispatchEvent(NativeEvent(surfaceId, id, eventName, params))
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // If we're re-attaching after a previous detach, the scope has been
+        // cancelled — recreate it so future coroutine launches actually run.
+        // First-attach (immediately after construction) finds the scope alive
+        // and this is a no-op.
+        if (!coroutineScope.isActive) {
+            coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        }
+    }
+
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         coroutineScope.cancel()
@@ -432,7 +500,10 @@ class RichChatInputView @JvmOverloads constructor(
     private companion object {
         val DEFAULT_MIME_TYPES: Array<String> = arrayOf("image/*")
         const val MAX_FILE_SIZE_BYTES = 20L * 1024L * 1024L  // 20 MB
-        const val CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L  // 7일
+        const val CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L  // 7 days
+        // Tuned so the 20 MB cap is reached in a small number of iterations
+        // without blocking the main thread for too long per chunk.
+        const val STREAM_CHUNK_BYTES = 64 * 1024
         const val TAG = "RichChatInput"
     }
 }

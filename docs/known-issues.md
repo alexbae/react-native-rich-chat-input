@@ -4,92 +4,13 @@ This document captures issues found during code review that are **not yet fixed*
 
 For issues that **are** fixed, see the "Recent bug fixes (history)" sections in [`platform/android.md`](./platform/android.md#recent-bug-fixes-history) and [`platform/ios.md`](./platform/ios.md#recent-bug-fixes-history).
 
----
-
-## 🔴 High priority
-
-### 1. `coroutineScope` not recreated on reattach
-
-**Platform:** Android  
-**File:** `android/src/main/java/com/whosup/packages/richinput/RichChatInputView.kt` (scope created at construction, cancelled in `onDetachedFromWindow`)
-
-**Symptom:** After the view detaches from the window and reattaches (RN Navigation screen pop+push, `react-native-screens` stash/restore, `FlatList`/`ScrollView` recycling), image paste silently fails. No error, no `onRichContent` event. Same applies to error dispatches originating from IO-side callbacks and to first-mount cache cleanup.
-
-**Root cause:** The single `CoroutineScope(Dispatchers.Main + SupervisorJob())` is cancelled in `onDetachedFromWindow` and never recreated in `onAttachedToWindow`. Subsequent `coroutineScope.launch { ... }` calls hit a cancelled scope and silently no-op.
-
-**Workaround:** Force-remount the component on screen focus (rotate the React `key`).
-
-**Fix direction:**
-- Override `onAttachedToWindow` to recreate the scope (or)
-- Replace the field with a lazy / nullable scope that is constructed on first use after attach.
-
----
-
-### 2. `prepareForRecycle` bypasses the keyboard daemon
-
-**Platform:** iOS  
-**File:** `ios/RichChatInputView.mm`, `prepareForRecycle` method
-
-**Symptom:** When Fabric recycles a `RichChatInputView` for a different `RichChatInput` mount, any in-flight IME composition from the previous mount can be flushed into the recycled view, reproducing the "안녕하세요 → 요 잔류" Korean IME bug — but in a context the host app can't easily reproduce (it happens during view recycling, not during their own `clear()` calls).
-
-**Root cause:**
-
-```objc
-- (void)prepareForRecycle {
-    [super prepareForRecycle];
-    _textView.text = @"";   // ← bypasses RTI; the very pattern clear()'s
-                            //    comment warns against
-    [_textView updatePlaceholderVisibility];
-    _state = nullptr;
-}
-```
-
-**Workaround:** None.
-
-**Fix direction:** Call the same code path as `clear()` (replace marked range first via `replaceRange:withText:`, then full-range replace, then `updatePlaceholderVisibility`). Skip the deferred-flush detection — at recycle time there's no host handler to receive `onError`.
-
----
-
-### 3. `readAndDispatchContent` blocks the UI thread
-
-**Platform:** Android  
-**File:** `android/src/main/java/com/whosup/packages/richinput/RichChatInputView.kt`, `readAndDispatchContent` method
-
-**Symptom:** Large GIF / image pastes (5–20 MB) freeze the UI for hundreds of milliseconds. On low-end devices, can trip the ANR watchdog.
-
-**Root cause:** Intentional design — the `content://` URI's temporary read permission expires when the `OnReceiveContentListener` callback returns, so we read the bytes synchronously on the main thread to stay inside the permission window. The 20 MB size check happens **after** the read, so a 19 MB paste blocks for the full read duration.
-
-**Workaround:** Set a stricter `acceptedMimeTypes` if your use case allows narrowing types.
-
-**Fix direction:**
-- Use `ContentResolver.openAssetFileDescriptor` to peek size before reading; reject early if > 20 MB.
-- Or: take a persistable URI grant via `ContentResolver.takePersistableUriPermission` (requires `Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION` from the keyboard, which most keyboards don't set), then read in background.
-- Or: stream the read in chunks to a temp file (still on main thread, but bounded; allows aborting on size overrun).
-
----
-
-### 4. No synchronous way to read the current text from JS
-
-**Platform:** Both  
-**Files:** `src/RichChatInputViewNativeComponent.ts` (no `getText` command), `src/RichChatInput.tsx` (ref only exposes `clear`)
-
-**Symptom:** Host apps that read `text` from state on send-button tap can race the latest `onChangeText` event. If the user types fast and taps send, the last keystroke's text-change event may not have crossed the JS bridge yet — the send handler sees stale text. The dropped character(s) then arrive after the send fires and either get lost (if `clear()` runs right after) or prepended to the next message.
-
-**Root cause:** All text-change events go through Fabric's async event dispatcher. There is no controlled `text`/`value` prop and no imperative `getText()` for synchronous read.
-
-**Workaround:** Tap a "send" button that takes the input text from state, then `setTimeout(..., 50)` before actually firing the send (gives async events time to flush). Not great UX.
-
-**Fix direction:** Add a Codegen `Commands.getText` that returns the EditText/UITextView's `text` synchronously through the Fabric command channel (requires a callback-based or TurboModule-based pattern since Fabric commands are nominally `void`). Expose via the ref:
-
-```ts
-inputRef.current?.getText()   // string, read directly from native
-```
+> **Note**: The four 🔴 high-priority issues from the original code review (coroutine scope reattach, iOS `prepareForRecycle` anti-pattern, paste main-thread block, missing synchronous text read) are now fixed. Their context lives in the platform docs' history sections and in [`api-reference.md`](./api-reference.md#imperative-api) (`getText()`).
 
 ---
 
 ## 🟡 Medium priority
 
-### 5. `onInputSizeChange` fires synchronously inside `afterTextChanged` on Android
+### 1. `onInputSizeChange` fires synchronously inside `afterTextChanged` on Android
 
 **Platform:** Android  
 **File:** `android/src/main/java/com/whosup/packages/richinput/RichChatInputView.kt`, `setupTextWatcher`
@@ -113,7 +34,7 @@ iOS solved the equivalent problem by deferring with `dispatch_async(main, ...)`;
 
 ---
 
-### 6. `pasteConfiguration` may be cached by UIKit
+### 2. `pasteConfiguration` may be cached by UIKit
 
 **Platform:** iOS  
 **File:** `ios/RichChatInputView.mm`, `pasteConfiguration` override
@@ -128,7 +49,7 @@ iOS solved the equivalent problem by deferring with `dispatch_async(main, ...)`;
 
 ---
 
-### 7. `NSTextStorage` observer not explicitly removed
+### 3. `NSTextStorage` observer not explicitly removed
 
 **Platform:** iOS  
 **File:** `ios/RichChatInputView.mm`, `RichChatInputInternalTextView` (no `dealloc`)
@@ -143,7 +64,7 @@ iOS solved the equivalent problem by deferring with `dispatch_async(main, ...)`;
 
 ## 🟢 Low priority / cleanup
 
-### 8. `package.json` lists a `cpp/` directory that doesn't exist
+### 4. `package.json` lists a `cpp/` directory that doesn't exist
 
 **File:** `package.json`, `files` array (`"cpp"`)
 
@@ -153,7 +74,7 @@ iOS solved the equivalent problem by deferring with `dispatch_async(main, ...)`;
 
 ---
 
-### 9. Event registration is declared in two places
+### 5. Event registration is declared in two places
 
 **File:** `android/src/main/java/com/whosup/packages/richinput/RichChatInputViewManager.kt`, `getExportedCustomBubblingEventTypeConstants`
 
@@ -163,7 +84,7 @@ iOS solved the equivalent problem by deferring with `dispatch_async(main, ...)`;
 
 ---
 
-### 10. Native code has no unit tests
+### 6. Native code has no unit tests
 
 **Platforms:** Both  
 **File:** `src/__tests__/index.test.tsx` (only covers the JS wrapper)
@@ -171,18 +92,33 @@ iOS solved the equivalent problem by deferring with `dispatch_async(main, ...)`;
 **Symptom:** Regressions in the native side are caught only by example-app smoke tests.
 
 **Fix direction:**
-- Android: Robolectric tests for `ViewManager` prop wiring and for `RichChatInputView` lifecycle (paste flow, `clearTextSafely`, MIME advertise).
-- iOS: XCTest unit tests for the `RichChatInputInternalTextView` private class (paste decoding, `clear` with marked text, height measurement).
+- Android: Robolectric tests for `ViewManager` prop wiring and for `RichChatInputView` lifecycle (paste flow, `clearTextSafely`, MIME advertise, coroutine scope reattach).
+- iOS: XCTest unit tests for the `RichChatInputInternalTextView` private class (paste decoding, `_clearTextReportingTelemetry:`, height measurement, `prepareForRecycle` clear-path reuse).
 
 ---
 
-### 11. `onInputSizeChange` lacks a Jest test
+### 7. `onInputSizeChange` lacks a Jest test
 
 **File:** `src/__tests__/index.test.tsx`
 
-**Symptom:** None functional; coverage gap. `onChangeText`, `onRichContent`, and `onError` have wrapper-unwrap tests; `onInputSizeChange` does not.
+**Symptom:** None functional; coverage gap. `onChangeText`, `onRichContent`, `onError`, `clear`, and `getText` are now covered; `onInputSizeChange` is the remaining gap.
 
 **Fix direction:** Add a test mirroring the existing pattern.
+
+---
+
+### 8. `getText()` cannot see past the latest dispatched `onChangeText`
+
+**Platforms:** Both  
+**File:** `src/RichChatInput.tsx`, `latestTextRef` + `useImperativeHandle`
+
+**Symptom:** `getText()` returns a JS-side mirror updated by every `onChangeText` event. It is fresher than React state (no setState batching delay), but it cannot reach further than the most recently delivered event. A truly synchronous read of the EditText / UITextView's live text (bypassing the event pipeline entirely) is not available.
+
+**Root cause:** Fabric `Commands` are nominally `void` and cannot return values synchronously. A true native-side read would require a TurboModule (e.g. `RichChatInputModule.getText(viewTag)`) which is a non-trivial addition.
+
+**Workaround:** The existing `getText()` covers the typical "user types then taps send" race because typing events reach JS before the tap event. For pathological scenarios, the host can `await new Promise(r => requestAnimationFrame(r))` before reading.
+
+**Fix direction:** Add a TurboModule that resolves the view by `reactTag` and returns its native `text` synchronously. Async-promise version is also acceptable.
 
 ---
 

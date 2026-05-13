@@ -74,20 +74,45 @@ export interface RichChatInputProps {
 }
 
 export interface RichChatInputRef {
+  /**
+   * Clears the input text and resets the IME composing state on both
+   * platforms. Always call this when programmatically emptying the input
+   * (e.g. after sending) — `setText('')` in JS does not notify the
+   * keyboard daemon and can leave stale composition state.
+   */
   clear: () => void;
+  /**
+   * Returns the most recent text the input has reported via `onChangeText`,
+   * read from a JS ref. This bypasses React state batching, so a send
+   * handler can read the freshest text on tap without racing the
+   * `setState(text)` re-render.
+   *
+   * Note: this is the *JS-side* latest value (updated by every native
+   * `onChangeText` event). It cannot reach further forward than the most
+   * recently dispatched text-change event. For the vast majority of
+   * "user types and taps send" flows, that's enough.
+   */
+  getText: () => string;
 }
 
 export const RichChatInput = forwardRef<RichChatInputRef, RichChatInputProps>(
   (props, ref) => {
     const nativeRef =
       useRef<React.ElementRef<typeof NativeRichChatInputView>>(null);
+    // Mirrors the latest text reported by the native onChangeText. Read
+    // by getText() and reset to '' on clear() so callers see the post-clear
+    // value synchronously rather than waiting for the empty-text event to
+    // round-trip from native.
+    const latestTextRef = useRef('');
 
     useImperativeHandle(ref, () => ({
       clear: () => {
+        latestTextRef.current = '';
         if (nativeRef.current) {
           Commands.clear(nativeRef.current);
         }
       },
+      getText: () => latestTextRef.current,
     }));
 
     const { onChangeText, onRichContent, onInputSizeChange, onError, ...rest } =
@@ -97,12 +122,13 @@ export const RichChatInput = forwardRef<RichChatInputRef, RichChatInputProps>(
       <NativeRichChatInputView
         ref={nativeRef}
         {...rest}
-        onChangeText={
-          onChangeText
-            ? (e: NativeSyntheticEvent<{ text: string }>) =>
-                onChangeText(e.nativeEvent.text)
-            : undefined
-        }
+        // Always wrap onChangeText so latestTextRef stays in sync, even when
+        // the host does not subscribe to the prop. The native dispatch fires
+        // unconditionally either way, so there's no perf cost.
+        onChangeText={(e: NativeSyntheticEvent<{ text: string }>) => {
+          latestTextRef.current = e.nativeEvent.text;
+          onChangeText?.(e.nativeEvent.text);
+        }}
         onRichContent={
           onRichContent
             ? (e: NativeSyntheticEvent<RichContentResult>) =>

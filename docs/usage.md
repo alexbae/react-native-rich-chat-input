@@ -83,7 +83,7 @@ const styles = StyleSheet.create({
 
 **Without `onInputSizeChange`, multiline auto-expand does not work.** The height stays pinned at the initial value. See [`features/auto-grow-height.md`](./features/auto-grow-height.md) for the rationale.
 
-## Imperative API: clearing the input
+## Imperative API: `clear()` and `getText()`
 
 ```tsx
 import { useRef } from 'react';
@@ -95,7 +95,12 @@ export function ChatComposer() {
   const inputRef = useRef<RichChatInputRef>(null);
 
   const handleSend = () => {
-    // ... send the message ...
+    // Reads the freshest text from the wrapper's mirror, bypassing React
+    // state batching. Avoids the race where state-driven `text` is one
+    // render stale when the send button is tapped quickly after typing.
+    const text = inputRef.current?.getText() ?? '';
+    if (!text) return;
+    api.send(text);
     inputRef.current?.clear();
   };
 
@@ -108,7 +113,8 @@ export function ChatComposer() {
 }
 ```
 
-`clear()` does more than wipe the text — it also resets the IME composing state to prevent stuck-character bugs on both Android and iOS. See [`platform/android.md`](./platform/android.md#clear-resets-ime-composing-state) and [`platform/ios.md`](./platform/ios.md#clear-and-the-korean-cjk-ime-bug) for details.
+- **`clear()`** does more than wipe the text — it also resets the IME composing state to prevent stuck-character bugs on both Android and iOS. See [`platform/android.md`](./platform/android.md#clear-resets-ime-composing-state) and [`platform/ios.md`](./platform/ios.md#clear-and-the-korean-cjk-ime-bug).
+- **`getText()`** returns the latest text reported via `onChangeText`, read synchronously from a JS ref. Prefer this over `text` from `useState` when reading on tap — see [`api-reference.md`](./api-reference.md#about-gettext-freshness) for the freshness contract.
 
 ## Observability: forwarding errors to Sentry
 
@@ -152,14 +158,15 @@ import type {
 
 export function ChatComposer({ onSubmit }: { onSubmit: (msg: { text: string; attachment?: RichContentResult }) => void }) {
   const inputRef = useRef<RichChatInputRef>(null);
-  const [text, setText] = useState('');
   const [attachment, setAttachment] = useState<RichContentResult | null>(null);
   const [height, setHeight] = useState(44);
 
   const handleSend = () => {
+    // getText() reads the wrapper's latest-text mirror — fresher than React
+    // state on fast typing → send sequences.
+    const text = inputRef.current?.getText() ?? '';
     if (!text && !attachment) return;
     onSubmit({ text, attachment: attachment ?? undefined });
-    setText('');
     setAttachment(null);
     inputRef.current?.clear();
   };
@@ -175,7 +182,6 @@ export function ChatComposer({ onSubmit }: { onSubmit: (msg: { text: string; att
         maxLength={2000}
         acceptedMimeTypes={['image/*']}
         style={[styles.input, { height }]}
-        onChangeText={setText}
         onRichContent={setAttachment}
         onInputSizeChange={({ height: h }) =>
           setHeight(Math.max(44, Math.min(250, h + 24)))

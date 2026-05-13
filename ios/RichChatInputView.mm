@@ -488,8 +488,11 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 
 - (void)prepareForRecycle {
     [super prepareForRecycle];
-    _textView.text = @"";
-    [_textView updatePlaceholderVisibility];
+    // Use the same RTI-safe clear path as -clear so a recycled view starts
+    // its next mount with no leftover IME composing state from the previous
+    // mount. Direct `.text = @""` here would re-introduce the "Korean syllable
+    // re-injected after clear" bug at recycle time.
+    [self _clearTextReportingTelemetry:NO];
     _state = nullptr;
 }
 
@@ -500,21 +503,33 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 }
 
 - (void)clear {
-    // Korean/Chinese/Japanese IMEs hold the composing syllable as a "marked text"
-    // range whose backing buffer lives in the keyboard daemon (RTI), not in the
-    // text view's storage. Two things have to happen on clear:
-    //
-    //   1) The marked range must be REMOVED through the UITextInput protocol —
-    //      not merely unmarked. -unmarkText only commits the marked characters
-    //      into regular storage; RTI keeps its composing-buffer reference and,
-    //      a frame or two after the clear, asynchronously re-inserts the last
-    //      syllable via onChangeText (the "안녕하세요 → 요 stuck" bug).
-    //      -replaceRange:withText:@"" actually deletes the marked region and
-    //      synchronously notifies RTI, which cancels the in-flight composition.
-    //
-    //   2) The remaining committed text is cleared via -replaceRange: as well,
-    //      so RTI sees a single coherent text change. Direct `.text = @""`
-    //      bypasses the daemon entirely and can produce the same stale-flush.
+    [self _clearTextReportingTelemetry:YES];
+}
+
+/**
+ * Korean/Chinese/Japanese IMEs hold the composing syllable as a "marked text"
+ * range whose backing buffer lives in the keyboard daemon (RTI), not in the
+ * text view's storage. Two things have to happen on clear:
+ *
+ *   1) The marked range must be REMOVED through the UITextInput protocol —
+ *      not merely unmarked. -unmarkText only commits the marked characters
+ *      into regular storage; RTI keeps its composing-buffer reference and,
+ *      a frame or two after the clear, asynchronously re-inserts the last
+ *      syllable via onChangeText (the "안녕하세요 → 요 stuck" bug).
+ *      -replaceRange:withText:@"" actually deletes the marked region and
+ *      synchronously notifies RTI, which cancels the in-flight composition.
+ *
+ *   2) The remaining committed text is cleared via -replaceRange: as well,
+ *      so RTI sees a single coherent text change. Direct `.text = @""`
+ *      bypasses the daemon entirely and can produce the same stale-flush.
+ *
+ * @param reportTelemetry Pass NO from -prepareForRecycle: at recycle time the
+ *  event emitter is about to be replaced by the next mount, so dispatching
+ *  onError would deliver the event to the wrong React component. The clear
+ *  itself still needs to follow the RTI-safe path so a recycled view doesn't
+ *  inherit stale composition state from the previous mount.
+ */
+- (void)_clearTextReportingTelemetry:(BOOL)reportTelemetry {
     UITextRange *markedRange = _textView.markedTextRange;
     BOOL hadMarkedText = (markedRange != nil);
     if (markedRange != nil) {
@@ -523,11 +538,13 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
         // markedTextRange non-nil with zero length. Force it to nil so the next
         // keystroke starts a fresh composition.
         if (_textView.markedTextRange != nil) {
-            [self dispatchError:@"IME_MARKED_TEXT_PERSISTED"
-                        message:@"replaceRange(markedTextRange, @\"\") did not clear the IME marked range; falling back to -unmarkText"
-                    nativeClass:@""
-                  nativeMessage:@""
-                    nativeStack:@""];
+            if (reportTelemetry) {
+                [self dispatchError:@"IME_MARKED_TEXT_PERSISTED"
+                            message:@"replaceRange(markedTextRange, @\"\") did not clear the IME marked range; falling back to -unmarkText"
+                        nativeClass:@""
+                      nativeMessage:@""
+                        nativeStack:@""];
+            }
             [_textView unmarkText];
         }
     }
@@ -546,7 +563,7 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     // keyboard daemon flushed a stale syllable back (the Korean "요" stuck
     // bug). Surface this so the host app can see the bug occurring in
     // production via its error tracker.
-    if (hadMarkedText) {
+    if (hadMarkedText && reportTelemetry) {
         __weak RichChatInputView *weakSelf = self;
         __weak RichChatInputInternalTextView *weakTextView = _textView;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),

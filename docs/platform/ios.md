@@ -206,8 +206,29 @@ When `style.padding` is set, the JS layout puts that padding inside `RichChatInp
 
 This is **supplementary** to `onInputSizeChange`, not a replacement — see [`features/auto-grow-height.md`](../features/auto-grow-height.md#why-its-not-automatic). The shadow-node path improves measurement determinism for screen rotation / dynamic type but the JS `height` state remains the authoritative size.
 
+## `prepareForRecycle` reuses the safe clear path
+
+When Fabric recycles a `RichChatInputView` for a different `RichChatInput` mount, the previous mount's IME composing state must not leak into the next mount. A naïve recycle that does `_textView.text = @""` would bypass the keyboard daemon (RTI) — the very anti-pattern that the `clear()` documentation warns against — and re-introduce the Korean syllable re-injection bug at recycle time.
+
+The implementation factors the clear logic into a private helper `-_clearTextReportingTelemetry:` and reuses it:
+
+```objc
+- (void)clear {
+    [self _clearTextReportingTelemetry:YES];
+}
+
+- (void)prepareForRecycle {
+    [super prepareForRecycle];
+    [self _clearTextReportingTelemetry:NO];
+    _state = nullptr;
+}
+```
+
+The `reportTelemetry` flag is `NO` at recycle time because the event emitter is about to be swapped for the next mount's emitter — dispatching `onError` here would deliver to the wrong React component. The IME-safe clear itself (the `replaceRange:withText:` calls) still runs identically.
+
 ## Recent bug fixes (history)
 
+- **`prepareForRecycle` uses RTI-safe clear** (resolved a stealth variant of the Korean IME stuck-character bug that fired at view recycle time rather than at host-driven `clear()`). See "[`prepareForRecycle` reuses the safe clear path](#prepareforrecycle-reuses-the-safe-clear-path)" above.
 - **Korean IME stuck character on clear** — see "[`clear()` and the Korean / CJK IME bug](#clear-and-the-korean-cjk-ime-bug)" above.
 - **`onInputSizeChange` timing** — see "[Height measurement timing](#height-measurement-timing)" above.
 - **`react-native-keyboard-controller` infinite recursion** — see "[React-native-keyboard-controller compatibility](#react-native-keyboard-controller-compatibility)" above.

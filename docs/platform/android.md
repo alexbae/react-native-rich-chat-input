@@ -29,20 +29,46 @@ This single listener covers both the keyboard "send image" gesture (GBoard / Sam
 
 ### Permission window
 
-The `content://` URI delivered by the listener has a **temporary read grant** that expires when the listener returns. To stay safe, we read the entire byte stream synchronously on the main thread, then dispatch the cache-write to `Dispatchers.IO`:
+The `content://` URI delivered by the listener has a **temporary read grant** that expires when the listener returns. To stay safe, the read happens synchronously on the main thread; the cache-write is offloaded to `Dispatchers.IO` afterward.
+
+To minimise UI-blocking time on oversized payloads, two early-exit guards run before the read commits:
+
+1. **AssetFileDescriptor size pre-check.** If the provider exposes a declared length, we reject content over 20 MB without reading a single byte:
 
 ```kotlin
-val bytes = inputStream.use { it.readBytes() }   // sync, on main thread
-
-coroutineScope.launch {
-    val fileUri = withContext(Dispatchers.IO) {
-        writeBytesToCache(bytes, mimeType)
+contentResolver.openAssetFileDescriptor(contentUri, "r")?.use { afd ->
+    if (afd.length != AssetFileDescriptor.UNKNOWN_LENGTH &&
+        afd.length > MAX_FILE_SIZE_BYTES) {
+        dispatchErrorEvent("RICH_CONTENT_TOO_LARGE", ...)
+        return
     }
-    if (fileUri != null) dispatchRichContentEvent(fileUri, mimeType)
 }
 ```
 
-This intentionally blocks the UI thread for the duration of the read — see [`known-issues.md`](../known-issues.md#3-android-readanddispatchcontent-blocks-the-ui-thread).
+Many providers return `UNKNOWN_LENGTH` (-1) — that's fine, we fall through.
+
+2. **Chunked streaming read with mid-stream abort.** When the size isn't known up front, we read in 64 KB chunks and break out as soon as the running total crosses the 20 MB cap:
+
+```kotlin
+val bytes = inputStream.use { stream ->
+    val out = ByteArrayOutputStream()
+    val buf = ByteArray(STREAM_CHUNK_BYTES)   // 64 KB
+    var total = 0L
+    var n = stream.read(buf)
+    while (n >= 0) {
+        total += n
+        if (total > MAX_FILE_SIZE_BYTES) {
+            sizeOverflowed = true
+            break
+        }
+        out.write(buf, 0, n)
+        n = stream.read(buf)
+    }
+    out.toByteArray()
+}
+```
+
+Net effect: a 50 MB paste no longer reads 50 MB before rejecting — it reads at most ~20 MB before aborting. A valid 20 MB paste still blocks the main thread for the full read, but that's the unavoidable cost of the permission-window contract.
 
 ### Advertising MIME types to the keyboard
 
@@ -108,12 +134,26 @@ If the layout is still null after the post — meaning the EditText hasn't been 
 
 ## Threading
 
-A single `CoroutineScope(Dispatchers.Main + SupervisorJob())` is created at construction. It is used for:
+A `CoroutineScope(Dispatchers.Main + SupervisorJob())` is held as a `var` field and re-created on every reattach. It is used for:
 - Cache writes (`Dispatchers.IO` via `withContext`).
 - Stale-file cleanup on first mount.
 - Error dispatches from IO-side callbacks (marshalled back to main via the scope's main dispatcher).
 
-The scope is `cancel()`ed in `onDetachedFromWindow`. **It is not currently recreated on reattach** — see [`known-issues.md`](../known-issues.md#1-coroutinescope-not-recreated-on-reattach).
+```kotlin
+override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    if (!coroutineScope.isActive) {
+        coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    }
+}
+
+override fun onDetachedFromWindow() {
+    super.onDetachedFromWindow()
+    coroutineScope.cancel()
+}
+```
+
+The reattach branch is critical because Fabric, `react-native-screens`, and `FlatList` recycling all detach a view from the window without destroying it, then reattach later. Without re-creating the scope, every `coroutineScope.launch { ... }` after reattach would silently no-op against the cancelled scope — image-paste cache writes and error dispatches would all be dropped.
 
 ## Cache cleanup on mount
 
@@ -140,6 +180,8 @@ If you add a new event to the codegen spec, remember to also add it to this map.
 
 ## Recent bug fixes (history)
 
+- **Coroutine scope re-created on reattach** (resolved image-paste silently failing after RN Navigation / `react-native-screens` / `FlatList` detach+reattach cycles). See "[Threading](#threading)" above.
+- **Paste streaming with size pre-check** (resolved main-thread block on oversized pastes: 50 MB pastes used to read all 50 MB before rejecting; now bail out via AssetFileDescriptor or abort mid-stream at the 20 MB cap). See "[Permission window](#permission-window)" above.
 - **IME composing-span clear** (resolved the "incomplete message / merged messages / persists until app restart" bug). See "[`clear()` resets IME composing state](#clear-resets-ime-composing-state)" above.
 - **Resize re-dispatch on width change** (resolved auto-grow being stuck at old wrap width after device rotation / fold / multi-window). See "[Input size dispatch](#input-size-dispatch)" above.
 - **IME-advertised MIME types** (resolved GBoard's GIF button being grayed out when host app passed a custom `acceptedMimeTypes`). See "[Advertising MIME types to the keyboard](#advertising-mime-types-to-the-keyboard)" above.
