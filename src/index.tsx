@@ -4,5 +4,7 @@ export type {
   RichContentResult,
   ContentSizeResult,
   RichChatInputRef,
+  RichChatInputError,
+  RichChatInputErrorCode,
 } from './RichChatInput';
 export { default as RichChatInputView } from './RichChatInputViewNativeComponent';

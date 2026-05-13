@@ -158,6 +158,10 @@ class RichChatInputView @JvmOverloads constructor(
         val mimeType = contentResolver.getType(contentUri)
         if (mimeType == null) {
             Log.e(TAG, "Cannot resolve MIME type for URI: $contentUri")
+            dispatchErrorEvent(
+                code = "RICH_CONTENT_MIME_UNKNOWN",
+                message = "ContentResolver could not resolve a MIME type for the pasted URI: $contentUri",
+            )
             return
         }
 
@@ -166,22 +170,46 @@ class RichChatInputView @JvmOverloads constructor(
             val inputStream = contentResolver.openInputStream(contentUri)
             if (inputStream == null) {
                 Log.e(TAG, "openInputStream returned null for URI: $contentUri")
+                dispatchErrorEvent(
+                    code = "RICH_CONTENT_OPEN_FAILED",
+                    message = "ContentResolver.openInputStream returned null for $contentUri",
+                )
                 return
             }
             bytes = inputStream.use { it.readBytes() }
         } catch (e: java.io.FileNotFoundException) {
             Log.e(TAG, "Content URI not found: $contentUri", e)
+            dispatchErrorEvent(
+                code = "RICH_CONTENT_FILE_NOT_FOUND",
+                message = "Pasted content URI was not found: $contentUri",
+                throwable = e,
+            )
             return
         } catch (e: SecurityException) {
             Log.e(TAG, "Permission denied for URI: $contentUri", e)
+            dispatchErrorEvent(
+                code = "RICH_CONTENT_PERMISSION_DENIED",
+                message = "Temporary read permission missing for pasted URI: $contentUri",
+                throwable = e,
+            )
             return
         } catch (e: java.io.IOException) {
             Log.e(TAG, "I/O error reading content URI: $contentUri", e)
+            dispatchErrorEvent(
+                code = "RICH_CONTENT_IO_ERROR",
+                message = "I/O error while reading pasted URI: $contentUri",
+                throwable = e,
+            )
             return
         }
 
         if (bytes.size > MAX_FILE_SIZE_BYTES) {
             Log.w(TAG, "Content exceeds ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit, ignoring")
+            dispatchErrorEvent(
+                code = "RICH_CONTENT_TOO_LARGE",
+                message = "Pasted content size ${bytes.size} bytes exceeds the " +
+                    "${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit",
+            )
             return
         }
 
@@ -204,6 +232,14 @@ class RichChatInputView @JvmOverloads constructor(
             Uri.fromFile(cacheFile).toString()
         } catch (e: java.io.IOException) {
             Log.e(TAG, "Failed to write content to cache", e)
+            // Dispatch on the main thread; this coroutine runs on Dispatchers.IO.
+            coroutineScope.launch {
+                dispatchErrorEvent(
+                    code = "RICH_CONTENT_CACHE_WRITE_FAILED",
+                    message = "Failed to persist pasted content to cache directory",
+                    throwable = e,
+                )
+            }
             null
         }
     }
@@ -265,8 +301,39 @@ class RichChatInputView @JvmOverloads constructor(
         dispatchNativeEvent("topChangeText", params)
     }
 
-    private fun dispatchInputSizeChangeEvent() {
-        val textLayout = layout ?: return
+    /**
+     * Bridge a recoverable native error to JS so the host app can forward it
+     * to its error tracker (e.g. Sentry.captureException). All slots are
+     * strings — empty when N/A — to match the Fabric codegen event shape,
+     * which does not support optional struct fields.
+     */
+    private fun dispatchErrorEvent(
+        code: String,
+        message: String,
+        throwable: Throwable? = null,
+    ) {
+        val params = Arguments.createMap().apply {
+            putString("code", code)
+            putString("message", message)
+            putString("nativeClass", throwable?.javaClass?.name ?: "")
+            putString("nativeMessage", throwable?.localizedMessage ?: "")
+            putString("nativeStack", throwable?.let { Log.getStackTraceString(it) } ?: "")
+        }
+        dispatchNativeEvent("topError", params)
+    }
+
+    private fun dispatchInputSizeChangeEvent(reportMissingLayout: Boolean = false) {
+        val textLayout = layout
+        if (textLayout == null) {
+            if (reportMissingLayout && width > 0) {
+                dispatchErrorEvent(
+                    code = "INPUT_SIZE_DISPATCH_FAILED",
+                    message = "EditText.getLayout() returned null after a width change " +
+                        "(w=$width) — auto-grow height cannot be remeasured.",
+                )
+            }
+            return
+        }
         val density = resources.displayMetrics.density
         // textLayout.height is the height of the text content in pixels.
         // compoundPaddingTop/Bottom includes any internal padding (0 for this view).
@@ -290,7 +357,7 @@ class RichChatInputView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w != oldw && w > 0) {
-            post { dispatchInputSizeChangeEvent() }
+            post { dispatchInputSizeChangeEvent(reportMissingLayout = true) }
         }
     }
 

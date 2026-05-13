@@ -13,6 +13,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)dispatchChangeText:(NSString *)text;
 - (void)dispatchRichContent:(NSString *)uri mimeType:(NSString *)mimeType;
 - (void)dispatchInputSizeChange:(CGSize)size;
+- (void)dispatchError:(NSString *)code
+              message:(NSString *)message
+          nativeClass:(NSString *)nativeClass
+        nativeMessage:(NSString *)nativeMessage
+          nativeStack:(NSString *)nativeStack;
 - (void)clear;
 
 @end

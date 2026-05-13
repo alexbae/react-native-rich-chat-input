@@ -10,7 +10,42 @@ import {
 } from 'react-native';
 import { RichChatInput } from 'react-native-rich-chat-input';
 
-import type { RichContentResult } from 'react-native-rich-chat-input';
+import type {
+  RichChatInputError,
+  RichContentResult,
+} from 'react-native-rich-chat-input';
+
+// In your real app, install @sentry/react-native and uncomment:
+// import * as Sentry from '@sentry/react-native';
+
+/**
+ * Forward native-detected RichChatInput errors to Sentry so the three
+ * known sporadic mobile bugs (Android resize-stale height, Android image
+ * paste failure, iOS Korean IME stuck character) are observable in
+ * production.
+ *
+ * Tagging by `code` lets you create per-bug alerts/issues in Sentry; the
+ * native stack trace string is attached as `extra` for debugging.
+ */
+function reportRichChatInputError(err: RichChatInputError) {
+  // Synthesize an Error so Sentry produces a meaningful issue title and
+  // can dedupe by `code` via the fingerprint.
+  const e = new Error(`[RichChatInput:${err.code}] ${err.message}`);
+  // eslint-disable-next-line no-console
+  console.warn(e.message, err);
+
+  // Sentry.captureException(e, {
+  //   tags: {
+  //     rich_chat_input_code: err.code,
+  //     rich_chat_input_native_class: err.nativeClass || 'none',
+  //   },
+  //   extra: {
+  //     nativeMessage: err.nativeMessage,
+  //     nativeStack: err.nativeStack,
+  //   },
+  //   fingerprint: ['rich-chat-input', err.code],
+  // });
+}
 
 export default function App() {
   const [text, setText] = useState('');
@@ -68,6 +103,7 @@ export default function App() {
           onRichContent={(content) =>
             setRichContents((prev) => [content, ...prev])
           }
+          onError={reportRichChatInputError}
           style={styles.input}
         />
       </View>

@@ -54,6 +54,31 @@ describe('RichChatInput', () => {
     });
   });
 
+  describe('onError', () => {
+    it('unwraps nativeEvent and calls handler with error object', () => {
+      const onError = jest.fn();
+      const renderer = render(<RichChatInput onError={onError} />);
+
+      const err = {
+        code: 'RICH_CONTENT_FILE_NOT_FOUND' as const,
+        message: 'Pasted content URI was not found',
+        nativeClass: 'java.io.FileNotFoundException',
+        nativeMessage: 'No such file or directory',
+        nativeStack: 'java.io.FileNotFoundException: ...',
+      };
+      act(() => {
+        getNativeProps(renderer).onError({ nativeEvent: err });
+      });
+
+      expect(onError).toHaveBeenCalledWith(err);
+    });
+
+    it('is undefined when prop is not provided', () => {
+      const renderer = render(<RichChatInput />);
+      expect(getNativeProps(renderer).onError).toBeUndefined();
+    });
+  });
+
   describe('prop pass-through', () => {
     it('passes all non-event props directly to native component', () => {
       const renderer = render(

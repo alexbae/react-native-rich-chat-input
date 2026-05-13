@@ -273,6 +273,14 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     if (data.length > kRichContentMaxFileSize) {
         NSLog(@"[RichChatInput] Rejecting content: size %lu bytes exceeds %lu MB limit",
               (unsigned long)data.length, (unsigned long)(kRichContentMaxFileSize / 1024 / 1024));
+        NSString *msg = [NSString stringWithFormat:
+            @"Pasted content size %lu bytes exceeds the %lu MB limit",
+            (unsigned long)data.length, (unsigned long)(kRichContentMaxFileSize / 1024 / 1024)];
+        [self.eventDelegate dispatchError:@"RICH_CONTENT_TOO_LARGE"
+                                  message:msg
+                              nativeClass:@""
+                            nativeMessage:@""
+                              nativeStack:@""];
         return;
     }
 
@@ -292,7 +300,17 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong RichChatInputInternalTextView *strongSelf = weakSelf;
-            if (!strongSelf || !success) return;
+            if (!strongSelf) return;
+            if (!success) {
+                NSString *errClass = error ? NSStringFromClass([error class]) : @"";
+                NSString *errMsg   = error.localizedDescription ?: @"";
+                [strongSelf.eventDelegate dispatchError:@"RICH_CONTENT_CACHE_WRITE_FAILED"
+                                                message:@"Failed to persist pasted content to NSTemporaryDirectory"
+                                            nativeClass:errClass
+                                          nativeMessage:errMsg
+                                            nativeStack:@""];
+                return;
+            }
             NSString *uri = fileURL.absoluteString; // "file:///..."
             [strongSelf.eventDelegate dispatchRichContent:uri mimeType:mimeType];
         });
@@ -498,12 +516,18 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     //      so RTI sees a single coherent text change. Direct `.text = @""`
     //      bypasses the daemon entirely and can produce the same stale-flush.
     UITextRange *markedRange = _textView.markedTextRange;
+    BOOL hadMarkedText = (markedRange != nil);
     if (markedRange != nil) {
         [_textView replaceRange:markedRange withText:@""];
         // Defensive: on some iOS releases an empty same-range replacement leaves
         // markedTextRange non-nil with zero length. Force it to nil so the next
         // keystroke starts a fresh composition.
         if (_textView.markedTextRange != nil) {
+            [self dispatchError:@"IME_MARKED_TEXT_PERSISTED"
+                        message:@"replaceRange(markedTextRange, @\"\") did not clear the IME marked range; falling back to -unmarkText"
+                    nativeClass:@""
+                  nativeMessage:@""
+                    nativeStack:@""];
             [_textView unmarkText];
         }
     }
@@ -516,6 +540,35 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
         }
     }
     [_textView updatePlaceholderVisibility];
+
+    // RTI flushes any in-flight composition events on the next run-loop tick.
+    // If the input ends up non-empty shortly after the synchronous clear, the
+    // keyboard daemon flushed a stale syllable back (the Korean "요" stuck
+    // bug). Surface this so the host app can see the bug occurring in
+    // production via its error tracker.
+    if (hadMarkedText) {
+        __weak RichChatInputView *weakSelf = self;
+        __weak RichChatInputInternalTextView *weakTextView = _textView;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            __strong RichChatInputView *strongSelf = weakSelf;
+            __strong RichChatInputInternalTextView *strongTextView = weakTextView;
+            if (!strongSelf || !strongTextView) return;
+            if (strongTextView.text.length > 0) {
+                NSString *flushed = strongTextView.text.length > 32
+                    ? [strongTextView.text substringToIndex:32]
+                    : strongTextView.text;
+                NSString *msg = [NSString stringWithFormat:
+                    @"IME flushed %lu char(s) back after clear() (sample: \"%@\")",
+                    (unsigned long)strongTextView.text.length, flushed];
+                [strongSelf dispatchError:@"IME_STALE_TEXT_FLUSHED"
+                                  message:msg
+                              nativeClass:@""
+                            nativeMessage:@""
+                              nativeStack:@""];
+            }
+        });
+    }
 }
 
 #pragma mark - Event dispatch (called from RichChatInputInternalTextView)
@@ -540,6 +593,22 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     emitter->onRichContent(RichChatInputViewEventEmitter::OnRichContent{
         .uri      = std::string(uri.UTF8String ?: ""),
         .mimeType = std::string(mimeType.UTF8String ?: "")
+    });
+}
+
+- (void)dispatchError:(NSString *)code
+              message:(NSString *)message
+          nativeClass:(NSString *)nativeClass
+        nativeMessage:(NSString *)nativeMessage
+          nativeStack:(NSString *)nativeStack {
+    if (!_eventEmitter) return;
+    auto emitter = std::static_pointer_cast<RichChatInputViewEventEmitter const>(_eventEmitter);
+    emitter->onError(RichChatInputViewEventEmitter::OnError{
+        .code          = std::string(code.UTF8String          ?: ""),
+        .message       = std::string(message.UTF8String       ?: ""),
+        .nativeClass   = std::string(nativeClass.UTF8String   ?: ""),
+        .nativeMessage = std::string(nativeMessage.UTF8String ?: ""),
+        .nativeStack   = std::string(nativeStack.UTF8String   ?: ""),
     });
 }
 

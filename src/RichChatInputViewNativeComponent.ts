@@ -21,6 +21,16 @@ type ContentSizeChangeEvent = Readonly<{
   height: Float;
 }>;
 
+// Fabric codegen does not support optional struct fields — empty strings
+// are passed from native when a particular slot is N/A.
+type ErrorEvent = Readonly<{
+  code: string;
+  message: string;
+  nativeClass: string;
+  nativeMessage: string;
+  nativeStack: string;
+}>;
+
 interface NativeProps extends ViewProps {
   placeholder?: string;
   placeholderTextColor?: ColorValue;
@@ -32,6 +42,7 @@ interface NativeProps extends ViewProps {
   onChangeText?: BubblingEventHandler<ChangeTextEvent>;
   onRichContent?: BubblingEventHandler<RichContentEvent>;
   onInputSizeChange?: BubblingEventHandler<ContentSizeChangeEvent>;
+  onError?: BubblingEventHandler<ErrorEvent>;
 }
 
 type ComponentType = HostComponent<NativeProps>;
