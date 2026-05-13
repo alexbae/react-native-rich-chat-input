@@ -49,6 +49,13 @@ class RichChatInputView @JvmOverloads constructor(
     // react-native-screens stash, FlatList recycling), `coroutineScope.launch`
     // on the cancelled scope would silently no-op — image-paste cache writes
     // and error dispatches would be lost.
+    //
+    // The field is mutated only from main-thread View lifecycle callbacks
+    // (onAttachedToWindow / onDetachedFromWindow), but it is READ from
+    // Dispatchers.IO (writeBytesToCache's error path re-launches on the
+    // scope). @Volatile guarantees the IO thread sees the latest assignment
+    // without a happens-before barrier from a synchronized block.
+    @Volatile
     private var coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var currentMimeTypes: Array<String> = DEFAULT_MIME_TYPES.copyOf()
 
@@ -232,6 +239,13 @@ class RichChatInputView @JvmOverloads constructor(
         // Pre-check size: many providers (keyboards included) expose the
         // payload length via AssetFileDescriptor. When they do, we can reject
         // oversized content without reading any bytes.
+        //
+        // The catch list is intentionally narrow — the three exception types
+        // here cover "provider doesn't implement AFD" / "URI doesn't resolve" /
+        // "permission missing" / "unsupported scheme". Any other exception
+        // (NullPointerException, IllegalStateException, ...) indicates a
+        // genuine bug we want to surface as a crash rather than silently
+        // skip the pre-check.
         try {
             contentResolver.openAssetFileDescriptor(contentUri, "r")?.use { afd ->
                 val declared = afd.length
@@ -246,9 +260,12 @@ class RichChatInputView @JvmOverloads constructor(
                     return
                 }
             }
-        } catch (_: Exception) {
-            // openAssetFileDescriptor is optional for content providers.
-            // Fall through — the streaming read below enforces the cap.
+        } catch (e: java.io.IOException) {
+            Log.d(TAG, "AFD pre-check skipped (I/O): ${e.message}")
+        } catch (e: SecurityException) {
+            Log.d(TAG, "AFD pre-check skipped (security): ${e.message}")
+        } catch (e: IllegalArgumentException) {
+            Log.d(TAG, "AFD pre-check skipped (illegal arg): ${e.message}")
         }
 
         val bytes: ByteArray

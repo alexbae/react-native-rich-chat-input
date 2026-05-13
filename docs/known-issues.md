@@ -107,7 +107,42 @@ iOS solved the equivalent problem by deferring with `dispatch_async(main, ...)`;
 
 ---
 
-### 8. `getText()` cannot see past the latest dispatched `onChangeText`
+### 8. In-flight paste coroutine may drop the final dispatch during detach
+
+**Platform:** Android  
+**File:** `android/src/main/java/com/whosup/packages/richinput/RichChatInputView.kt`, `readAndDispatchContent`
+
+**Symptom:** If the user pastes a large image then immediately navigates away (detaching the view), the cache-write coroutine may complete its IO work but be unable to deliver the resulting `onRichContent` event. The bytes land in the cache directory successfully — the host app simply never learns about them.
+
+**Root cause:**
+
+```kotlin
+coroutineScope.launch {                            // Scope = OLD (about to be cancelled)
+    val fileUri = withContext(Dispatchers.IO) {
+        writeBytesToCache(bytes, mimeType)
+    }
+    if (fileUri != null) dispatchRichContentEvent(fileUri, mimeType)
+}
+```
+
+If detach occurs while `withContext(IO)` is in flight, the OLD scope is cancelled. Cooperative cancellation lets the IO work usually finish, but the resumption on the main dispatcher of the OLD scope is cancelled before `dispatchRichContentEvent` runs. The reattach replaces the scope, but the new scope has no knowledge of the orphaned cache file.
+
+**Workaround:** None. Rare race — requires paste + navigate in the same animation frame.
+
+**Fix direction:**
+- Option A (preferred): On `onAttachedToWindow` after a previous detach, scan `context.cacheDir` for `rich_content_*` files newer than the previous detach timestamp and re-dispatch them as `onRichContent` events. Requires bookkeeping of the detach timestamp.
+- Option B: Persist the in-flight `(uri, mimeType)` tuples to a JSON file on disk before the `dispatchRichContentEvent` call, then on reattach scan-and-resend any unsent entries.
+- Option C (simplest, weakest): Wrap the dispatch in `NonCancellable`:
+  ```kotlin
+  withContext(NonCancellable + Dispatchers.Main) {
+      dispatchRichContentEvent(fileUri, mimeType)
+  }
+  ```
+  This lets the dispatch finish even though the scope is being torn down — but the event would be delivered to the JS side after the host has already unmounted the JS component, so the `onRichContent` prop closure may be stale or no-op. Acceptable for many UX patterns; not for all.
+
+---
+
+### 9. `getText()` cannot see past the latest dispatched `onChangeText`
 
 **Platforms:** Both  
 **File:** `src/RichChatInput.tsx`, `latestTextRef` + `useImperativeHandle`
