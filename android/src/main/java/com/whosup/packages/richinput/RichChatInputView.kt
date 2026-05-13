@@ -10,9 +10,14 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
 import androidx.appcompat.widget.AppCompatEditText
 import androidx.core.view.OnReceiveContentListener
 import androidx.core.view.ViewCompat
+import androidx.core.view.inputmethod.EditorInfoCompat
+import androidx.core.view.inputmethod.InputConnectionCompat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactContext
 import com.facebook.react.bridge.ReadableArray
@@ -67,6 +72,13 @@ class RichChatInputView @JvmOverloads constructor(
         if (!nextMimeTypes.contentEquals(currentMimeTypes)) {
             currentMimeTypes = nextMimeTypes.copyOf()
             registerReceiveContentListener()
+            // Force the IME to recreate its InputConnection so the updated MIME
+            // type list flows through onCreateInputConnection → EditorInfo. Without
+            // this, the keyboard keeps using the previously advertised set and
+            // image inserts (GIF/sticker) silently fall back to no-op until the
+            // user blurs and refocuses the field.
+            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.restartInput(this)
         }
     }
 
@@ -118,6 +130,21 @@ class RichChatInputView @JvmOverloads constructor(
                 remaining
             }
         )
+    }
+
+    /**
+     * Advertises the accepted rich-content MIME types on the InputConnection so
+     * IMEs (Gboard, Samsung Keyboard, etc.) enable the image/GIF/sticker insert
+     * affordance and route commitContent() calls back to our
+     * OnReceiveContentListener. Without this, ViewCompat.setOnReceiveContentListener
+     * silently no-ops for IME-driven inserts on API < 31, and even on 31+ some
+     * IMEs continue to use the legacy commitContent path that requires the
+     * EditorInfo advertisement.
+     */
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        val ic = super.onCreateInputConnection(outAttrs) ?: return null
+        EditorInfoCompat.setContentMimeTypes(outAttrs, currentMimeTypes)
+        return InputConnectionCompat.createWrapper(this, ic, outAttrs)
     }
 
     /**
@@ -249,6 +276,22 @@ class RichChatInputView @JvmOverloads constructor(
             putDouble("height", (contentHeightPx / density).toDouble())
         }
         dispatchNativeEvent("topInputSizeChange", params)
+    }
+
+    /**
+     * Width changes from device folding/unfolding, rotation, or multi-window
+     * resizing re-wrap the text but do NOT fire afterTextChanged, so the JS-side
+     * cached height keeps the previous wrap-width's value — the input renders
+     * larger (or smaller) than the content actually needs. Re-dispatch so JS
+     * can resync. Posted to the next loop tick so getLayout() reflects the
+     * new width (the StaticLayout rebuild happens during measure, which on
+     * some configuration-change paths runs after onSizeChanged).
+     */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != oldw && w > 0) {
+            post { dispatchInputSizeChangeEvent() }
+        }
     }
 
     private inner class NativeEvent(

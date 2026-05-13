@@ -482,17 +482,31 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
 }
 
 - (void)clear {
-    // End any in-progress IME composition (Korean/Chinese/Japanese marked text)
-    // BEFORE replacing the range. Otherwise the keyboard daemon (RTI) still holds
-    // the marked text reference and asynchronously flushes it back via
-    // onChangeText after the clear, leaving the last composing character
-    // (e.g. "요" of "안녕하세요") stuck in the input.
-    if (_textView.markedTextRange) {
-        [_textView unmarkText];
+    // Korean/Chinese/Japanese IMEs hold the composing syllable as a "marked text"
+    // range whose backing buffer lives in the keyboard daemon (RTI), not in the
+    // text view's storage. Two things have to happen on clear:
+    //
+    //   1) The marked range must be REMOVED through the UITextInput protocol —
+    //      not merely unmarked. -unmarkText only commits the marked characters
+    //      into regular storage; RTI keeps its composing-buffer reference and,
+    //      a frame or two after the clear, asynchronously re-inserts the last
+    //      syllable via onChangeText (the "안녕하세요 → 요 stuck" bug).
+    //      -replaceRange:withText:@"" actually deletes the marked region and
+    //      synchronously notifies RTI, which cancels the in-flight composition.
+    //
+    //   2) The remaining committed text is cleared via -replaceRange: as well,
+    //      so RTI sees a single coherent text change. Direct `.text = @""`
+    //      bypasses the daemon entirely and can produce the same stale-flush.
+    UITextRange *markedRange = _textView.markedTextRange;
+    if (markedRange != nil) {
+        [_textView replaceRange:markedRange withText:@""];
+        // Defensive: on some iOS releases an empty same-range replacement leaves
+        // markedTextRange non-nil with zero length. Force it to nil so the next
+        // keystroke starts a fresh composition.
+        if (_textView.markedTextRange != nil) {
+            [_textView unmarkText];
+        }
     }
-    // Use UITextInput protocol methods so the iOS RTI (Remote Text Input) session
-    // is properly notified. Direct `.text = @""` bypasses the keyboard daemon,
-    // which then pushes stale text back via onChangeText after the clear.
     UITextPosition *beginning = _textView.beginningOfDocument;
     UITextPosition *end = _textView.endOfDocument;
     if (beginning && end) {
