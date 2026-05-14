@@ -73,6 +73,24 @@ class RichChatInputViewManager : SimpleViewManager<RichChatInputView>(),
     view?.clearTextSafely()
   }
 
+  // Manually advertised bubbling event map.
+  //
+  // Fabric's Codegen generates equivalent registration through
+  // RichChatInputViewManagerDelegate (constructed in `init` and exposed via
+  // getDelegate()). On a clean New-Architecture setup that delegate is the
+  // single source of truth, and this override is redundant.
+  //
+  // We keep the override anyway because some RN hot-reload paths re-create
+  // ViewManagers without re-querying the Codegen delegate's event constants —
+  // when that happens (notably on Metro full reloads during dev), events with
+  // names not present in the legacy custom-bubbling map are silently dropped
+  // until the app process restarts. Returning the same map manually makes the
+  // legacy lookup path work too.
+  //
+  // CONSISTENCY RULE: When you add a new event prop in
+  // src/RichChatInputViewNativeComponent.ts, ALSO append an entry below.
+  // Drift here means JS handlers stop firing in dev hot-reload scenarios
+  // even though prod builds (where the Codegen path is always used) work.
   override fun getExportedCustomBubblingEventTypeConstants(): MutableMap<String, Any> {
     return mutableMapOf(
       "topRichContent" to
