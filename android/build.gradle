@@ -60,9 +60,16 @@ android {
     sourceCompatibility JavaVersion.VERSION_1_8
     targetCompatibility JavaVersion.VERSION_1_8
   }
+
 }
 
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
+
+  // Pure JUnit is enough for the first batch of tests (string-mapping
+  // helpers, prop-coercion logic). Robolectric will be added when we
+  // start exercising AppCompatEditText lifecycle behavior that needs a
+  // real Android Application context.
+  testImplementation "junit:junit:4.13.2"
 }
