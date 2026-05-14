@@ -1,3 +1,12 @@
+// Codegen spec for the native RichChatInputView.
+//
+// IMPORTANT: when adding a new BubblingEventHandler prop here, also append a
+// matching entry to RichChatInputViewManager.getExportedCustomBubblingEventTypeConstants
+// in android/src/main/java/com/whosup/packages/richinput/RichChatInputViewManager.kt.
+// That manual map duplicates what Codegen generates, but it's kept on purpose
+// to cover hot-reload paths where the generated delegate is bypassed —
+// removing it causes events to drop intermittently in dev. See that file's
+// header comment for the full reasoning.
 import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 import codegenNativeCommands from 'react-native/Libraries/Utilities/codegenNativeCommands';
 import type { HostComponent, ColorValue, ViewProps } from 'react-native';
