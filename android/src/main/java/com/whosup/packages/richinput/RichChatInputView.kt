@@ -28,6 +28,7 @@ import com.facebook.react.uimanager.UIManagerHelper
 import com.facebook.react.uimanager.events.Event
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
@@ -337,7 +338,22 @@ class RichChatInputView @JvmOverloads constructor(
                 writeBytesToCache(bytes, mimeType)
             }
             if (fileUri != null) {
-                dispatchRichContentEvent(fileUri, mimeType)
+                // Deliver the dispatch under NonCancellable so it survives a
+                // detach that cancels the parent scope mid-flight. Without
+                // this, a paste-then-navigate-immediately sequence could land
+                // the bytes in cacheDir successfully but never deliver the
+                // onRichContent event — the host app would have no way to
+                // learn about the cached file.
+                //
+                // Trade-off: by the time this fires, the JS component may
+                // have unmounted. The onRichContent prop closure could be
+                // stale (a no-op in modern React rather than a crash). For
+                // hosts that need guaranteed delivery across unmount,
+                // resurfacing orphaned cache files on a fresh mount is the
+                // next step (see docs/known-issues.md option A).
+                withContext(NonCancellable + Dispatchers.Main) {
+                    dispatchRichContentEvent(fileUri, mimeType)
+                }
             }
         }
     }
