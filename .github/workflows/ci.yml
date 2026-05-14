@@ -44,6 +44,30 @@ jobs:
       - name: Run unit tests
         run: yarn test --maxWorkers=2 --coverage
 
+  test-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Run Android unit tests
+        # Pure JUnit tests live under android/src/test. The library has no
+        # standalone Android project, so we invoke gradle through the example
+        # app's android/ shell.
+        run: |
+          cd example/android
+          ./gradlew :react-native-rich-chat-input:testDebugUnitTest --no-daemon --stacktrace
+
   build-library:
     runs-on: ubuntu-latest
 

@@ -397,18 +397,8 @@ class RichChatInputView @JvmOverloads constructor(
         }
     }
 
-    private fun mimeTypeToExtension(mimeType: String): String = when {
-        "gif" in mimeType -> "gif"
-        "webp" in mimeType -> "webp"
-        "png" in mimeType -> "png"
-        "jpeg" in mimeType || "jpg" in mimeType -> "jpg"
-        "svg" in mimeType -> "svg"
-        "mp4" in mimeType -> "mp4"
-        "webm" in mimeType -> "webm"
-        "3gp" in mimeType -> "3gp"
-        "mkv" in mimeType -> "mkv"
-        else -> "bin"
-    }
+    private fun mimeTypeToExtension(mimeType: String): String =
+        Companion.mimeTypeToExtension(mimeType)
 
     private fun setupTextWatcher() {
         addTextChangedListener(object : TextWatcher {
@@ -535,7 +525,7 @@ class RichChatInputView @JvmOverloads constructor(
         coroutineScope.cancel()
     }
 
-    private companion object {
+    internal companion object {
         val DEFAULT_MIME_TYPES: Array<String> = arrayOf("image/*")
         const val MAX_FILE_SIZE_BYTES = 20L * 1024L * 1024L  // 20 MB
         const val CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L  // 7 days
@@ -543,5 +533,22 @@ class RichChatInputView @JvmOverloads constructor(
         // without blocking the main thread for too long per chunk.
         const val STREAM_CHUNK_BYTES = 64 * 1024
         const val TAG = "RichChatInput"
+
+        // Exposed at module-internal visibility so unit tests in
+        // `android/src/test/...` can exercise it without instantiating the
+        // full AppCompatEditText (which would require Robolectric and an
+        // Application context).
+        internal fun mimeTypeToExtension(mimeType: String): String = when {
+            "gif" in mimeType -> "gif"
+            "webp" in mimeType -> "webp"
+            "png" in mimeType -> "png"
+            "jpeg" in mimeType || "jpg" in mimeType -> "jpg"
+            "svg" in mimeType -> "svg"
+            "mp4" in mimeType -> "mp4"
+            "webm" in mimeType -> "webm"
+            "3gp" in mimeType -> "3gp"
+            "mkv" in mimeType -> "mkv"
+            else -> "bin"
+        }
     }
 }
