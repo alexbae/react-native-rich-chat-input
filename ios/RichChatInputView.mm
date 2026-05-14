@@ -165,6 +165,28 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
     [super insertText:text];
 }
 
+// Block backspace when the buffer is empty.
+//
+// Korean (and other CJK) IMEs maintain a per-session "recently committed
+// syllables" buffer in the keyboard daemon (RTI). After a clear() (e.g. after
+// the user sends a message), that buffer still holds the syllables of the
+// previously committed text. The text view's storage is empty, but RTI is
+// not. If we forward a backspace on an empty buffer through to super,
+// UIKit asks RTI to "delete the last thing", and RTI obliges by re-inserting
+// the previous message's last syllable via -insertText:. Repeating the
+// backspace walks back through the entire previous message, syllable by
+// syllable ("안녕하세요" reappears as "요", "세", "하", "녕", "안").
+//
+// Swallowing the backspace at the UITextView layer prevents RTI from ever
+// seeing it, so its recall buffer stays dormant. There is no functional
+// loss: backspace on an empty text view has nothing to delete anyway.
+- (void)deleteBackward {
+    if (self.text.length == 0 && self.markedTextRange == nil) {
+        return;
+    }
+    [super deleteBackward];
+}
+
 #pragma mark - Paste interception
 
 - (void)paste:(id)sender {
@@ -557,6 +579,26 @@ static const NSTimeInterval kRichContentCacheMaxAge = 7 * 24 * 60 * 60; // 7일 
         }
     }
     [_textView updatePlaceholderVisibility];
+
+    // Tell the IME the text + selection changed externally so it discards its
+    // per-session recall state. Without this, after a Korean clear the keyboard
+    // daemon keeps the previously committed syllables ("안녕하세요") in a recall
+    // buffer; once the user types and deletes one new syllable, RTI starts
+    // re-injecting the previous syllables one at a time via -insertText:, in
+    // reverse order ("안녕하세요" → "요" → "세" → "하" → "녕" → "안").
+    //
+    // textDidChange + selectionDidChange together with reloadInputViews is the
+    // least-invasive way to force RTI to reset; resignFirstResponder also
+    // works but dismisses the keyboard, which we want to avoid because the
+    // user typically keeps typing right after sending.
+    id<UITextInputDelegate> inputDelegate = _textView.inputDelegate;
+    [inputDelegate selectionWillChange:_textView];
+    [inputDelegate textWillChange:_textView];
+    [inputDelegate textDidChange:_textView];
+    [inputDelegate selectionDidChange:_textView];
+    if (_textView.isFirstResponder) {
+        [_textView reloadInputViews];
+    }
 
     // RTI flushes any in-flight composition events on the next run-loop tick.
     // If the input ends up non-empty shortly after the synchronous clear, the
