@@ -400,7 +400,12 @@ class RichChatInputView @JvmOverloads constructor(
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 dispatchChangeTextEvent(s?.toString() ?: "")
-                dispatchInputSizeChangeEvent()
+                // Defer the size dispatch to the next message-loop tick.
+                // afterTextChanged fires while the layout's recompute is still
+                // in flight, so layout.height can be one frame stale on
+                // multi-line transitions (Enter at end of long line that
+                // re-wraps). Posting matches the iOS dispatch_async pattern.
+                post { dispatchInputSizeChangeEvent() }
             }
         })
     }
